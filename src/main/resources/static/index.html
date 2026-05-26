@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chaturbate DVR - 直播录制管理</title>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/element-plus/dist/index.full.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <style>
+        body { margin: 0; background: #f5f7fa; }
+        .app-container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        .header { text-align: center; margin-bottom: 30px; }
+        .header h1 { color: #409EFF; margin: 0; }
+        .stats-card { margin-bottom: 20px; }
+        .channel-card { margin-bottom: 15px; }
+        .recording-status { display: inline-flex; align-items: center; gap: 5px; }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+        .status-online { background: #67C23A; }
+        .status-offline { background: #909399; }
+        .status-recording { background: #F56C6C; animation: pulse 1.5s infinite; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .recording-badge {
+            background: #F56C6C;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="app-container">
+            <div class="header">
+                <h1>📹 Chaturbate DVR</h1>
+                <p>直播录制管理系统</p>
+            </div>
+
+            <!-- 统计卡片 -->
+            <el-row :gutter="20" class="stats-card">
+                <el-col :span="6">
+                    <el-card>
+                        <div style="text-align: center;">
+                            <div style="font-size: 32px; color: #409EFF; font-weight: bold;">{{ stats.totalChannels }}</div>
+                            <div style="color: #909399;">总直播间</div>
+                        </div>
+                    </el-card>
+                </el-col>
+                <el-col :span="6">
+                    <el-card>
+                        <div style="text-align: center;">
+                            <div style="font-size: 32px; color: #67C23A; font-weight: bold;">{{ stats.onlineChannels }}</div>
+                            <div style="color: #909399;">在线直播</div>
+                        </div>
+                    </el-card>
+                </el-col>
+                <el-col :span="6">
+                    <el-card>
+                        <div style="text-align: center;">
+                            <div style="font-size: 32px; color: #F56C6C; font-weight: bold;">{{ stats.recordingChannels }}</div>
+                            <div style="color: #909399;">录制中</div>
+                        </div>
+                    </el-card>
+                </el-col>
+                <el-col :span="6">
+                    <el-card>
+                        <div style="text-align: center;">
+                            <div style="font-size: 32px; color: #E6A23C; font-weight: bold;">{{ stats.totalRecordings }}</div>
+                            <div style="color: #909399;">录制记录</div>
+                        </div>
+                    </el-card>
+                </el-col>
+            </el-row>
+
+            <!-- 操作栏 -->
+            <el-card style="margin-bottom: 20px;">
+                <el-row :gutter="10" align="middle">
+                    <el-col :span="12">
+                        <el-input 
+                            v-model="newChannel.username" 
+                            placeholder="输入主播用户名"
+                            style="width: 200px; margin-right: 10px;"
+                        >
+                            <template #prefix>👤</template>
+                        </el-input>
+                        <el-input 
+                            v-model="newChannel.displayName" 
+                            placeholder="显示名称(可选)"
+                            style="width: 200px; margin-right: 10px;"
+                        />
+                        <el-button type="primary" @click="addChannel">➕ 添加直播间</el-button>
+                    </el-col>
+                    <el-col :span="12" style="text-align: right;">
+                        <el-button @click="refreshData">🔄 刷新</el-button>
+                    </el-col>
+                </el-row>
+            </el-card>
+
+            <!-- 直播间列表 -->
+            <el-card>
+                <template #header>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>📋 直播间列表</span>
+                                        <el-radio-group v-model="channelFilter" size="small">
+                            <el-radio-button value="all">全部</el-radio-button>
+                            <el-radio-button value="online">在线</el-radio-button>
+                            <el-radio-button value="recording">录制中</el-radio-button>
+                        </el-radio-group>
+                    </div>
+                </template>
+
+                <el-table :data="filteredChannels" style="width: 100%" v-loading="loading">
+                    <el-table-column prop="username" label="用户名" width="150">
+                        <template #default="scope">
+                            <strong>{{ scope.row.username }}</strong>
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="displayName" label="显示名称" width="150" />
+                    <el-table-column label="状态" width="120">
+                        <template #default="scope">
+                            <div class="recording-status">
+                                <span class="status-dot" :class="getStatusClass(scope.row)"></span>
+                                <span>{{ getStatusText(scope.row) }}</span>
+                            </div>
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="lastStatus" label="最后状态" width="100">
+                        <template #default="scope">
+                            <el-tag :type="getLastStatusType(scope.row.lastStatus)" size="small">
+                                {{ scope.row.lastStatus || '未知' }}
+                            </el-tag>
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="lastCheckTime" label="最后检查" width="180">
+                        <template #default="scope">
+                            {{ formatDate(scope.row.lastCheckTime) }}
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="200">
+                        <template #default="scope">
+                            <el-button 
+                                :type="scope.row.enabled ? 'warning' : 'success'" 
+                                size="small"
+                                @click="toggleChannel(scope.row)"
+                            >
+                                {{ scope.row.enabled ? '禁用' : '启用' }}
+                            </el-button>
+                            <el-button type="danger" size="small" @click="deleteChannel(scope.row)">删除</el-button>
+                        </template>
+                    </el-table-column>
+                </el-table>
+            </el-card>
+
+            <!-- 录制记录 -->
+            <el-card style="margin-top: 20px;">
+                <template #header>
+                    <span>🎬 最近录制记录</span>
+                </template>
+                <el-table :data="recordings" style="width: 100%" v-loading="loading">
+                    <el-table-column prop="channelUsername" label="主播" width="150" />
+                    <el-table-column prop="startTime" label="开始时间" width="180">
+                        <template #default="scope">
+                            {{ formatDate(scope.row.startTime) }}
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="endTime" label="结束时间" width="180">
+                        <template #default="scope">
+                            {{ formatDate(scope.row.endTime) }}
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="durationSeconds" label="时长" width="100">
+                        <template #default="scope">
+                            {{ formatDuration(scope.row.durationSeconds) }}
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="quality" label="质量" width="80" />
+                    <el-table-column prop="status" label="状态" width="100">
+                        <template #default="scope">
+                            <el-tag :type="getRecordingStatusType(scope.row.status)" size="small">
+                                {{ scope.row.status }}
+                            </el-tag>
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="fileSize" label="文件大小" width="120">
+                        <template #default="scope">
+                            {{ formatFileSize(scope.row.fileSize) }}
+                        </template>
+                    </el-table-column>
+                </el-table>
+            </el-card>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted } = Vue;
+        const { ElMessage, ElMessageBox } = ElementPlus;
+
+        const API_BASE = 'http://localhost:8080/api';
+
+        createApp({
+            setup() {
+                const loading = ref(false);
+                const channels = ref([]);
+                const recordings = ref([]);
+                const channelFilter = ref('all');
+                const newChannel = ref({ username: '', displayName: '' });
+
+                const stats = computed(() => ({
+                    totalChannels: channels.value.length,
+                    onlineChannels: channels.value.filter(c => c.lastStatus === 'public').length,
+                    recordingChannels: channels.value.filter(c => c.recording).length,
+                    totalRecordings: recordings.value.length
+                }));
+
+                const filteredChannels = computed(() => {
+                    if (channelFilter.value === 'online') {
+                        return channels.value.filter(c => c.lastStatus === 'public');
+                    } else if (channelFilter.value === 'recording') {
+                        return channels.value.filter(c => c.recording);
+                    }
+                    return channels.value;
+                });
+
+                const fetchChannels = async () => {
+                    try {
+                        const res = await axios.get(`${API_BASE}/channels`);
+                        channels.value = res.data;
+                    } catch (e) {
+                        ElMessage.error('获取直播间列表失败');
+                    }
+                };
+
+                const fetchRecordings = async () => {
+                    try {
+                        const res = await axios.get(`${API_BASE}/recordings`);
+                        recordings.value = res.data.slice(0, 20);
+                    } catch (e) {
+                        ElMessage.error('获取录制记录失败');
+                    }
+                };
+
+                const addChannel = async () => {
+                    if (!newChannel.value.username.trim()) {
+                        ElMessage.warning('请输入用户名');
+                        return;
+                    }
+                    try {
+                        await axios.post(`${API_BASE}/channels`, newChannel.value);
+                        ElMessage.success('添加成功');
+                        newChannel.value = { username: '', displayName: '' };
+                        await fetchChannels();
+                    } catch (e) {
+                        ElMessage.error(e.response?.data || '添加失败');
+                    }
+                };
+
+                const toggleChannel = async (channel) => {
+                    try {
+                        await axios.put(`${API_BASE}/channels/${channel.id}/toggle`);
+                        ElMessage.success('操作成功');
+                        await fetchChannels();
+                    } catch (e) {
+                        ElMessage.error('操作失败');
+                    }
+                };
+
+                const deleteChannel = async (channel) => {
+                    try {
+                        await ElMessageBox.confirm('确定删除该直播间吗？', '提示', { type: 'warning' });
+                        await axios.delete(`${API_BASE}/channels/${channel.id}`);
+                        ElMessage.success('删除成功');
+                        await fetchChannels();
+                    } catch (e) {
+                        if (e !== 'cancel') ElMessage.error('删除失败');
+                    }
+                };
+
+                const refreshData = async () => {
+                    loading.value = true;
+                    await Promise.all([fetchChannels(), fetchRecordings()]);
+                    loading.value = false;
+                    ElMessage.success('刷新成功');
+                };
+
+                const getStatusClass = (channel) => {
+                    if (channel.recording) return 'status-recording';
+                    if (channel.lastStatus === 'public') return 'status-online';
+                    return 'status-offline';
+                };
+
+                const getStatusText = (channel) => {
+                    if (channel.recording) return '录制中';
+                    if (channel.lastStatus === 'public') return '在线';
+                    return '离线';
+                };
+
+                const getLastStatusType = (status) => {
+                    const map = { public: 'success', private: 'warning', offline: 'info' };
+                    return map[status] || 'info';
+                };
+
+                const getRecordingStatusType = (status) => {
+                    const map = { recording: 'danger', completed: 'success', failed: 'warning' };
+                    return map[status] || 'info';
+                };
+
+                const formatDate = (dateStr) => {
+                    if (!dateStr) return '-';
+                    const date = new Date(dateStr);
+                    return date.toLocaleString('zh-CN');
+                };
+
+                const formatDuration = (seconds) => {
+                    if (!seconds) return '-';
+                    const mins = Math.floor(seconds / 60);
+                    const secs = seconds % 60;
+                    return `${mins}分${secs}秒`;
+                };
+
+                const formatFileSize = (bytes) => {
+                    if (!bytes) return '-';
+                    const units = ['B', 'KB', 'MB', 'GB'];
+                    let size = bytes;
+                    let unitIndex = 0;
+                    while (size >= 1024 && unitIndex < units.length - 1) {
+                        size /= 1024;
+                        unitIndex++;
+                    }
+                    return `${size.toFixed(2)} ${units[unitIndex]}`;
+                };
+
+                onMounted(() => {
+                    refreshData();
+                    setInterval(refreshData, 30000);
+                });
+
+                return {
+                    loading,
+                    channels,
+                    recordings,
+                    stats,
+                    channelFilter,
+                    filteredChannels,
+                    newChannel,
+                    addChannel,
+                    toggleChannel,
+                    deleteChannel,
+                    refreshData,
+                    getStatusClass,
+                    getStatusText,
+                    getLastStatusType,
+                    getRecordingStatusType,
+                    formatDate,
+                    formatDuration,
+                    formatFileSize
+                };
+            }
+        }).use(ElementPlus).mount('#app');
+    </script>
+</body>
+</html>
