@@ -26,29 +26,15 @@ mybatis:
   type-aliases-package: com.chaturbate.dvr.entity
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
-
-# DVR Configuration
-dvr:
-  # Cookie and User-Agent for API access
-  cookie: "cf_clearance=HS6LYGTdIUUuxlD5dWBgRnXhDgmiuJXelUOgEFDw0OI-1779541980-1.2.1.1-s_0BSeLwzzYt1SFi.X_43beuAaMibDHyfo8yqGjqTyY5M4XTKR5hsgHiCofJ40.Kza5HaQmpmqvK0mDhPTfNDth6N6DpvslkbGR4KDcTKCPxZAnyrzikXluiLNyzNb_1RDD3XYF1C1LeGf12HzYS_FGTkqSBWMGkyuysv6kmLud0.nK6cuf0yqW3Y6XvtVFUybeky0HA9lfGsRYQ5ioVTjCJnexv2VRKR7IJ.MXbWQVx2cy8uf.sy_sMTbC2WhcXr3rccu28qzYBWmuQzWgGhFPxUwPJk3bfqyzE.JQKdiIEDi5vKcDwCr7TB5Q8cEnG79gU3XVcaXTiPFBPScJ6H8PuXWCsXWkxpirzZYdGMnoT6Am16LFhzdTmmvrBqTaxnfUBuLlmfZV.rr8St4OzRRggz3CoYnpEy3uSEwudK0I"
-  user-agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
-  
-  # Recording settings
-  record-path: ./recordings
-  check-interval-seconds: 30
-  segment-duration-seconds: 10
-  
-  # Stream quality preference: 360p, 480p, 540p, 720p, 1080p
-  preferred-quality: 720p
-  
-  # API base URL
-  api-base-url: https://zh-hans.chaturbate.com/api/chatvideocontext/
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
 
 # Logging
 logging:
   level:
     com.chaturbate.dvr: DEBUG
-    org.apache.ibatis: DEBUG
+    org.apache.ibatis: ERROR
+    com.chaturbate.dvr.mapper: ERROR
+    org.mybatis: ERROR
+    org.apache.ibatis.session.defaults.DefaultSqlSession: ERROR
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

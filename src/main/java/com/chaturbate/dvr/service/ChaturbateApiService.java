@@ -8,7 +8,7 @@ import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.json.JSONObject;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -19,19 +19,29 @@ import java.nio.charset.StandardCharsets;
  * Chaturbate API 服务
  * 负责调用直播间接口获取直播状态
  * 使用 org.json 库解析 JSON
+ * 从数据库加载配置（system_config 表）
  */
 @Slf4j
 @Service
 public class ChaturbateApiService {
 
-    @Value("${dvr.api-base-url}")
-    private String apiBaseUrl;
+    @Autowired
+    private SystemConfigService configService;
 
-    @Value("${dvr.cookie}")
-    private String cookie;
+    // 配置项（从数据库加载，带默认值）
+    private String getApiBaseUrl() {
+        return configService.getConfigValue("api_base_url", 
+            "https://zh-hans.chaturbate.com/api/chatvideocontext/");
+    }
 
-    @Value("${dvr.user-agent}")
-    private String userAgent;
+    private String getCookie() {
+        return configService.getConfigValue("cookie", "");
+    }
+
+    private String getUserAgent() {
+        return configService.getConfigValue("user_agent", 
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36");
+    }
 
     /**
      * 获取直播间上下文信息
@@ -40,15 +50,15 @@ public class ChaturbateApiService {
      * @return ChatVideoContext 或 null (如果获取失败)
      */
     public ChatVideoContext getChatVideoContext(String username) {
-        String url = apiBaseUrl + URLEncoder.encode(username, StandardCharsets.UTF_8) + "/";
+        String url = getApiBaseUrl() + URLEncoder.encode(username, StandardCharsets.UTF_8) + "/";
 
         try (CloseableHttpClient httpClient = HttpClients.custom()
-                .setUserAgent(userAgent)
+                .setUserAgent(getUserAgent())
                 .build()) {
 
             HttpGet httpGet = new HttpGet(url);
-            httpGet.setHeader("Cookie", cookie);
-            httpGet.setHeader("User-Agent", userAgent);
+            httpGet.setHeader("Cookie", getCookie());
+            httpGet.setHeader("User-Agent", getUserAgent());
             httpGet.setHeader("Accept", "application/json");
             httpGet.setHeader("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
             httpGet.setHeader("Referer", "https://zh-hans.chaturbate.com/");

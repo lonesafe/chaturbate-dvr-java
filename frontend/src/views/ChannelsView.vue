@@ -39,7 +39,14 @@
                 {{ row.username.charAt(0).toUpperCase() }}
               </el-avatar>
               <div class="channel-info">
-                <div class="username">{{ row.username }}</div>
+                <div class="username">
+                  <!-- 修改：用户名可点击，跳转到直播间 -->
+                  <a :href="'https://zh-hans.chaturbate.com/' + row.username + '/'"
+                     target="_blank"
+                     class="username-link">
+                    {{ row.username }}
+                  </a>
+                </div>
                 <div class="display-name" v-if="row.displayName && row.displayName !== row.username">
                   {{ row.displayName }}
                 </div>
@@ -96,6 +103,20 @@
               >
                 停止
               </el-button>
+              <el-button 
+                size="small" 
+                @click="viewLogs(row)"
+                :icon="Document"
+              >
+                日志
+              </el-button>
+              <el-button 
+                size="small" 
+                @click="viewRecordings(row)"
+                :icon="FolderOpened"
+              >
+                文件
+              </el-button>
               <el-button size="small" @click="editChannel(row)">编辑</el-button>
               <el-button type="danger" size="small" @click="deleteChannel(row)">删除</el-button>
             </el-button-group>
@@ -139,10 +160,12 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useChannelStore } from '../stores/channel'
+import { channelApi, recordingApi } from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
+import { Document, FolderOpened } from '@element-plus/icons-vue'
 
 const store = useChannelStore()
 const loading = ref(false)
@@ -276,15 +299,146 @@ const handleToggle = async (channel) => {
   }
 }
 
-const startRecording = (channel) => {
-  ElMessage.info(`开始录制 ${channel.username}`)
-  // TODO: 调用开始录制API
+const startRecording = async (channel) => {
+  try {
+    await recordingApi.start(channel.username)
+    ElMessage.success(`开始录制 ${channel.username}`)
+    channel.recording = true
+    // 启动状态轮询
+    startStatusPolling()
+  } catch (e) {
+    ElMessage.error(e || '开始录制失败')
+  }
 }
 
-const stopRecording = (channel) => {
-  ElMessage.info(`停止录制 ${channel.username}`)
-  // TODO: 调用停止录制API
+const stopRecording = async (channel) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定停止录制 "${channel.username}" 吗？`,
+      '确认停止',
+      { type: 'warning' }
+    )
+    await recordingApi.stop(channel.username)
+    ElMessage.success(`停止录制 ${channel.username}`)
+    channel.recording = false
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error(e || '停止录制失败')
+  }
 }
+
+// 查看录制日志
+const viewLogs = async (channel) => {
+  try {
+    const res = await recordingApi.getLogs(channel.username)
+    // 显示日志对话框
+    ElMessageBox.alert(
+      `<div style="max-height: 400px; overflow-y: auto;"><pre>${res.logs || '暂无日志'}</pre></div>`,
+      `录制日志 - ${channel.username}`,
+      {
+        dangerouslyUseHTMLString: true,
+        confirmButtonText: '关闭',
+        customClass: 'log-dialog'
+      }
+    )
+  } catch (e) {
+    ElMessage.error('获取日志失败: ' + (e || '未知错误'))
+  }
+}
+
+// 查看录制文件
+const viewRecordings = async (channel) => {
+  try {
+    const res = await recordingApi.getByChannel(channel.id)
+    if (!res || res.length === 0) {
+      ElMessage.info('该频道暂无录制文件')
+      return
+    }
+    
+    // 显示文件列表对话框
+    const fileList = res.map(r => 
+      `<div style="margin: 8px 0; padding: 8px; background: #f5f5f5; border-radius: 4px;">
+        <div><strong>文件:</strong> ${r.filePath || '未知'}</div>
+        <div><strong>大小:</strong> ${formatFileSize(r.fileSize)}</div>
+        <div><strong>时长:</strong> ${formatDuration(r.durationSeconds)}</div>
+        <div><strong>时间:</strong> ${formatDate(r.startTime)}</div>
+      </div>`
+    ).join('')
+    
+    ElMessageBox.alert(
+      `<div style="max-height: 500px; overflow-y: auto;">${fileList}</div>`,
+      `录制文件 - ${channel.username}`,
+      {
+        dangerouslyUseHTMLString: true,
+        confirmButtonText: '关闭',
+        customClass: 'file-dialog'
+      }
+    )
+  } catch (e) {
+    ElMessage.error('获取录制文件失败: ' + (e || '未知错误'))
+  }
+}
+
+// 格式化文件大小
+const formatFileSize = (bytes) => {
+  if (!bytes) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let size = bytes
+  let unitIndex = 0
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex++
+  }
+  return `${size.toFixed(2)} ${units[unitIndex]}`
+}
+
+// 格式化时长
+const formatDuration = (seconds) => {
+  if (!seconds) return '0秒'
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const secs = seconds % 60
+  if (hours > 0) {
+    return `${hours}小时${minutes}分钟${secs}秒`
+  } else if (minutes > 0) {
+    return `${minutes}分钟${secs}秒`
+  } else {
+    return `${secs}秒`
+  }
+}
+const startStatusPolling = () => {
+  if (statusTimer) return
+  statusTimer = setInterval(async () => {
+    try {
+      const res = await recordingApi.getActive()
+      // 更新录制状态
+      store.channels.forEach(channel => {
+        const recording = res.find(r => r.username === channel.username)
+        channel.recording = !!recording
+      })
+    } catch (e) {
+      console.error('状态轮询失败:', e)
+    }
+  }, 5000) // 每5秒轮询一次
+}
+
+const stopStatusPolling = () => {
+  if (statusTimer) {
+    clearInterval(statusTimer)
+    statusTimer = null
+  }
+}
+
+// 状态轮询
+let statusTimer = null
+
+// 生命周期
+onMounted(() => {
+  startStatusPolling()
+})
+
+onUnmounted(() => {
+  stopStatusPolling()
+})
 </script>
 
 <style scoped>
@@ -314,6 +468,19 @@ const stopRecording = (channel) => {
 
 .username {
   font-weight: bold;
+}
+
+/* 新增：用户名链接样式 */
+.username-link {
+  color: #409EFF;
+  text-decoration: none;
+  font-weight: bold;
+  transition: color 0.3s;
+}
+
+.username-link:hover {
+  color: #66b1ff;
+  text-decoration: underline;
 }
 
 .display-name {

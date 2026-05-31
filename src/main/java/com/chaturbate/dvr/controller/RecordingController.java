@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -79,16 +80,22 @@ public class RecordingController {
     @GetMapping("/logs/{username}")
     public ResponseEntity<?> getFfmpegLogs(@PathVariable String username) {
         HlsRecorder.RecordingTask task = hlsRecorder.getRecordingTask(username);
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("username", username);
+        
         if (task == null) {
-            return ResponseEntity.notFound().build();
+            // 没有录制任务，返回空日志
+            result.put("logs", new ArrayList<>());
+            result.put("isRunning", false);
+            result.put("message", "没有正在进行的录制任务");
+            return ResponseEntity.ok(result);
         }
 
         List<String> logs = task.getLogs();
-        Map<String, Object> result = new HashMap<>();
-        result.put("success", true);
         result.put("logs", logs);
         result.put("isRunning", !task.isStopped());
-        result.put("username", username);
         return ResponseEntity.ok(result);
     }
 }

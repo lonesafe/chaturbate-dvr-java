@@ -76,10 +76,15 @@ CREATE TABLE IF NOT EXISTS system_config (
 -- Insert default system configs
 -- ============================================
 INSERT INTO system_config (config_key, config_value, description) VALUES
-('cookie', 'cf_clearance=...', 'Cloudflare clearance cookie'),
-('user_agent', 'Mozilla/5.0 ...', 'Browser User-Agent'),
+('cookie', '', 'Cloudflare cf_clearance cookie'),
+('user_agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36', '浏览器 User-Agent'),
 ('check_interval_seconds', '30', '直播间状态检查间隔(秒)'),
 ('record_path', './recordings', '录制文件保存路径'),
-('preferred_quality', '720p', '优先录制质量'),
-('api_base_url', 'https://zh-hans.chaturbate.com/api/chatvideocontext/', 'API基础URL')
+('preferred_quality', '720p', '优先录制质量(360p/480p/540p/720p/1080p)'),
+('api_base_url', 'https://zh-hans.chaturbate.com/api/chatvideocontext/', 'Chaturbate API 基础URL'),
+('tmp_path', './tmp', '临时文件目录'),
+('segment_duration_seconds', '10', 'HLS 片段时长(秒)'),
+('download_threads', '4', '并发下载线程数'),
+('merge_segments', '10', '每N个片段触发一次合并'),
+('ffmpeg_path', 'ffmpeg', 'ffmpeg 可执行文件路径')
 ON DUPLICATE KEY UPDATE config_value = VALUES(config_value);
