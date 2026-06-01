@@ -19,6 +19,13 @@
     <name>Chaturbate DVR</name>
     <description>Live stream recording application for Chaturbate</description>
 
+    <repositories>
+        <repository>
+            <id>central</id>
+            <url>https://repo.maven.apache.org/maven2/</url>
+        </repository>
+    </repositories>
+
     <properties>
         <java.version>21</java.version>
         <maven.compiler.source>21</maven.compiler.source>
@@ -74,6 +81,20 @@
             <groupId>org.json</groupId>
             <artifactId>json</artifactId>
             <version>20251224</version>
+        </dependency>
+        <!-- Source: https://mvnrepository.com/artifact/cn.hutool/hutool-all -->
+        <dependency>
+            <groupId>cn.hutool</groupId>
+            <artifactId>hutool-all</artifactId>
+            <version>5.8.46</version>
+            <scope>compile</scope>
+        </dependency>
+
+        <!-- MP4 Parser for fMP4 merge -->
+        <dependency>
+            <groupId>org.mp4parser</groupId>
+            <artifactId>isoparser</artifactId>
+            <version>1.9.41</version>
         </dependency>
 
         <!-- HTTP Client -->

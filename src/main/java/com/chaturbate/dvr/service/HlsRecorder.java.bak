@@ -239,14 +239,6 @@ public class HlsRecorder {
      * 2. 解析 PART-HOLD-BACK 确定轮询间隔
      * 3. 持续轮询 m3u8，发现新分片立即异步下载
      */
-
-    /**
-     * 下载并合并循环（增量合并版本）
-     * 
-     * 核心改进：
-     * 1. 每次 chunklist 下载完成后立即合并，生成 partN.mp4
-     * 2. 录制结束后用 ffmpeg concat 合并所有 parts
-     */
     private void downloadAndMergeLoop(RecordingTask task, String videoChunklistUrl, String audioChunklistUrl, 
             Path tmpDir, List<String> videoFiles, List<String> audioFiles) throws Exception {
         
@@ -266,10 +258,6 @@ public class HlsRecorder {
         
         // 默认轮询间隔（毫秒）
         long pollIntervalMs = 2000;
-        
-        // 用于跟踪 part 文件
-        List<Path> partFiles = new ArrayList<>();
-        int partCounter = 0;
         
         // 下载 init 片段
         downloadInitSegments(task, videoChunklistUrl, audioChunklistUrl, tmpDir);
@@ -356,22 +344,14 @@ public class HlsRecorder {
                             newVideoCount, newAudioCount, resultQueue.size());
                 }
 
-                // 4. **等待本次所有新分片下载完成**
-                int totalNew = newVideoCount + newAudioCount;
-                int downloaded = 0;
-                while (downloaded < totalNew) {
-                    DownloadResult result = resultQueue.poll(5, TimeUnit.SECONDS);
-                    if (result != null) {
-                        if ("video".equals(result.type)) {
-                            pendingVideoFiles.add(result.filename);
-                        } else {
-                            pendingAudioFiles.add(result.filename);
-                        }
-                        downloaded++;
-                        log.debug("下载进度: {}/{}", downloaded, totalNew);
+                // 4. **非阻塞收集已完成的下载结果**
+                while (true) {
+                    DownloadResult result = resultQueue.poll(0, TimeUnit.MILLISECONDS);
+                    if (result == null) break;
+                    if ("video".equals(result.type)) {
+                        pendingVideoFiles.add(result.filename);
                     } else {
-                        // 超时，检查是否还有新分片
-                        if (newVideoCount == 0 && newAudioCount == 0) break;
+                        pendingAudioFiles.add(result.filename);
                     }
                 }
 
@@ -379,63 +359,7 @@ public class HlsRecorder {
                 pendingVideoFiles.sort(String::compareTo);
                 pendingAudioFiles.sort(String::compareTo);
 
-                // 5. **关键：本次分片下载完成后，立即合并**
-                if (!pendingVideoFiles.isEmpty() && !pendingAudioFiles.isEmpty()) {
-                    partCounter++;
-                    
-                    // 5.1 合并视频 segment
-                    Path videoMerged = tmpDir.resolve("video_part" + partCounter + ".mp4");
-                    List<Path> videoSegPaths = pendingVideoFiles.stream()
-                            .map(f -> tmpDir.resolve(f))
-                            .collect(java.util.stream.Collectors.toList());
-                    
-                    try {
-                        Fmp4Merger.merge(task.getInitVideoSegmentFile(), videoSegPaths, videoMerged);
-                        log.info("视频 part {} 合并完成: {} ({} 个分片)", partCounter, videoMerged, videoSegPaths.size());
-                    } catch (Exception e) {
-                        log.error("视频 part {} 合并失败: {}", partCounter, e.getMessage(), e);
-                        continue;
-                    }
-                    
-                    // 5.2 合并音频 segment
-                    Path audioMerged = tmpDir.resolve("audio_part" + partCounter + ".mp4");
-                    List<Path> audioSegPaths = pendingAudioFiles.stream()
-                            .map(f -> tmpDir.resolve(f))
-                            .collect(java.util.stream.Collectors.toList());
-                    
-                    try {
-                        Fmp4Merger.merge(task.getInitAudioSegmentFile(), audioSegPaths, audioMerged);
-                        log.info("音频 part {} 合并完成: {} ({} 个分片)", partCounter, audioMerged, audioSegPaths.size());
-                    } catch (Exception e) {
-                        log.error("音频 part {} 合并失败: {}", partCounter, e.getMessage(), e);
-                        continue;
-                    }
-                    
-                    // 5.3 ffmpeg 混合音视频
-                    Path partFile = tmpDir.resolve("part" + partCounter + ".mp4");
-                    String ffmpegCmd = String.format("%s -y -i \"%s\" -i \"%s\" -c copy -map 0:v:0 -map 1:a:0 \"%s\"",
-                            getFfmpegPath(), videoMerged.toString(), audioMerged.toString(), partFile.toString());
-                    
-                    log.info("开始混合音视频 part {}: {}", partCounter, partFile.getFileName());
-                    ProcessBuilder pb = new ProcessBuilder("bash", "-c", ffmpegCmd);
-                    Process process = pb.start();
-                    int exitCode = process.waitFor();
-                    
-                    if (exitCode == 0) {
-                        log.info("Part {} 混合完成: {}", partCounter, partFile.getFileName());
-                        partFiles.add(partFile);
-                        
-                        // 清理临时文件
-                        videoMerged.toFile().delete();
-                        audioMerged.toFile().delete();
-                        
-                        // 清空 pending 列表，为下一个 chunklist 做准备
-                        pendingVideoFiles.clear();
-                        pendingAudioFiles.clear();
-                    } else {
-                        log.error("Part {} ffmpeg 混合失败, exitCode={}", partCounter, exitCode);
-                    }
-                }
+                // 5. 不再定期合并，等待录制结束后一次性合并
 
                 // 6. 根据 PART-HOLD-BACK 控制轮询间隔（不等待下载完成）
                 long elapsed = System.currentTimeMillis() - loopStartTime;
@@ -460,53 +384,102 @@ public class HlsRecorder {
             log.warn("下载线程池关闭被中断");
         }
 
-        // 8. 录制结束后，合并所有 parts
-        log.info("录制结束，开始合并 {} 个 parts...", partFiles.size());
+        // 8. 收集剩余的下载结果
+        resultQueue.drainTo(new ArrayList<>());
+        while (true) {
+            DownloadResult result = resultQueue.poll(0, TimeUnit.SECONDS);
+            if (result == null) break;
+            if ("video".equals(result.type)) {
+                pendingVideoFiles.add(result.filename);
+            } else {
+                pendingAudioFiles.add(result.filename);
+            }
+        }
+
+        // 9. 录制结束后，使用 Fmp4Merger 一次性合并所有 segment
+        log.info("录制结束，开始合并所有 segment...");
         
-        if (partFiles.isEmpty()) {
-            log.warn("没有生成任何 part 文件，录制可能失败");
-            return;
+        // 9.1 合并视频 segment
+        if (!pendingVideoFiles.isEmpty() && task.getInitVideoSegmentFile() != null) {
+            Path videoMerged = task.getTmpDir().resolve("video_merged.mp4");
+            log.info("合并 {} 个视频 segment -> {}", pendingVideoFiles.size(), videoMerged);
+            
+            List<Path> videoSegPaths = pendingVideoFiles.stream()
+                    .map(f -> task.getTmpDir().resolve(f))
+                    .collect(java.util.stream.Collectors.toList());
+            
+            try {
+                Fmp4Merger.merge(task.getInitVideoSegmentFile(), videoSegPaths, videoMerged);
+                log.info("视频合并完成: {}", videoMerged);
+                videoFiles.add("video_merged.mp4");
+            } catch (Exception e) {
+                log.error("视频合并失败: {}", e.getMessage(), e);
+            }
         }
         
-        if (partFiles.size() == 1) {
-            // 只有一个 part，直接重命名为最终文件
-            Path singlePart = partFiles.get(0);
-            Path finalOutput = Paths.get(getRecordPath(), task.getUsername() + "_" + 
-                    LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")) + ".mp4");
+        // 9.2 合并音频 segment
+        Path audioMerged = null;
+        if (!pendingAudioFiles.isEmpty() && task.getInitAudioSegmentFile() != null) {
+            audioMerged = task.getTmpDir().resolve("audio_merged.mp4");
+            log.info("合并 {} 个音频 segment -> {}", pendingAudioFiles.size(), audioMerged);
             
-            Files.createDirectories(finalOutput.getParent());
-            Files.move(singlePart, finalOutput, StandardCopyOption.REPLACE_EXISTING);
-            log.info("录制完成（单 part）: {}", finalOutput);
+            List<Path> audioSegPaths = pendingAudioFiles.stream()
+                    .map(f -> task.getTmpDir().resolve(f))
+                    .collect(java.util.stream.Collectors.toList());
             
-        } else {
-            // 多个 parts，使用 ffmpeg concat 合并
-            Path concatList = tmpDir.resolve("concat_list.txt");
-            try (BufferedWriter writer = Files.newBufferedWriter(concatList)) {
-                for (Path part : partFiles) {
-                    writer.write("file  + part.toAbsolutePath() + ");
-                    writer.newLine();
-                }
+            try {
+                Fmp4Merger.merge(task.getInitAudioSegmentFile(), audioSegPaths, audioMerged);
+                log.info("音频合并完成: {}", audioMerged);
+            } catch (Exception e) {
+                log.error("音频合并失败: {}", e.getMessage(), e);
             }
+        }
+        
+        // 9.3 用 ffmpeg 混合音视频
+        if (audioMerged != null && Files.exists(audioMerged)) {
+            log.info("混合音视频...");
+            String finalOutputName = String.format("%s_%s.mp4", task.getUsername(),
+                    LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")));
+            Path finalOutput = task.getOutputDir().resolve(finalOutputName);
+            task.setFinalOutputFile(finalOutput);
             
-            Path finalOutput = Paths.get(getRecordPath(), task.getUsername() + "_" + 
-                    LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")) + ".mp4");
+            String[] mergeCommand = {
+                    getFfmpegPath(),
+                    "-loglevel", "info",
+                    "-y",
+                    "-i", task.getTmpDir().resolve("video_merged.mp4").toAbsolutePath().toString(),
+                    "-i", audioMerged.toAbsolutePath().toString(),
+                    "-c", "copy",
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
+                    finalOutput.toAbsolutePath().toString()
+            };
+            runFfmpeg(mergeCommand, task);
+            log.info("音视频混合完成: {}", finalOutput);
+        } else if (!videoFiles.isEmpty()) {
+            // 无音频，直接重命名视频
+            String finalOutputName = String.format("%s_%s.mp4", task.getUsername(),
+                    LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")));
+            Path finalOutput = task.getOutputDir().resolve(finalOutputName);
+            task.setFinalOutputFile(finalOutput);
             
-            String concatCmd = String.format("%s -y -f concat -safe 0 -i \"%s\" -c copy \"%s\"",
-                    getFfmpegPath(), concatList.toString(), finalOutput.toString());
-            
-            log.info("开始合并 {} 个 parts 为最终文件: {}", partFiles.size(), finalOutput.getFileName());
-            ProcessBuilder pb = new ProcessBuilder("bash", "-c", concatCmd);
-            Process process = pb.start();
-            int exitCode = process.waitFor();
-            
-            if (exitCode == 0) {
-                log.info("所有 parts 合并完成: {}", finalOutput);
-            } else {
-                log.error("合并 parts 失败, exitCode={}", exitCode);
-            }
+            Files.move(task.getTmpDir().resolve("video_merged.mp4"), 
+                       finalOutput, 
+                       StandardCopyOption.REPLACE_EXISTING);
+            log.info("无音频，视频直接作为最终文件: {}", finalOutput);
+        }
+        
+        if (videoFiles.isEmpty() && audioFiles.isEmpty() && pendingVideoFiles.isEmpty()) {
+            log.warn("没有下载到任何片段，可能的原因：\n" +
+                    "  1. Cookie 已过期\n" +
+                    "  2. chunklist URL 无效\n" +
+                    "  3. 网络连接有问题");
         }
     }
 
+    /**
+     * 下载 init 片段（视频 + 音频）
+     */
     private void downloadInitSegments(RecordingTask task, String videoChunklistUrl, String audioChunklistUrl, Path tmpDir) {
         try {
             // 下载视频 init 片段

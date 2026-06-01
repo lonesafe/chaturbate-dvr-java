@@ -145,12 +145,13 @@ public class HlsParser {
     /**
      * 解析片段列表 (chunklist.m3u8)
      * 返回所有片段的 URL 和 init 片段 URL
-     * @return 包含 segments 和 initSegmentUrl 的 Map
+     * @return 包含 segments, initSegmentUrl, partHoldBack 的 Map
      */
     public static java.util.Map<String, Object> parseChunklistWithInit(String m3u8Content) {
         java.util.Map<String, Object> result = new java.util.HashMap<>();
         List<SegmentInfo> segments = new ArrayList<>();
         String initSegmentUrl = null;
+        Long partHoldBack = null;
 
         try (BufferedReader reader = new BufferedReader(new StringReader(m3u8Content))) {
             String line;
@@ -162,6 +163,24 @@ public class HlsParser {
                 // 解析 #EXT-X-MAP (init 片段)
                 if (line.startsWith("#EXT-X-MAP:")) {
                     initSegmentUrl = extractMapUri(line);
+                    log.debug("解析到 EXT-X-MAP: {}", initSegmentUrl);
+                }
+                
+                // 调试：打印所有 # 开头的行
+                if (line.startsWith("#")) {
+                    log.trace("chunklist 标签: {}", line);
+                }
+                
+                // 解析 #EXT-X-PART-HOLD-BACK（直播延迟控制）
+                // 格式: #EXT-X-PART-HOLD-BACK:1.0
+                if (line.startsWith("#EXT-X-PART-HOLD-BACK:")) {
+                    String valueStr = line.substring(line.indexOf(':') + 1).trim();
+                    try {
+                        partHoldBack = (long) Double.parseDouble(valueStr);
+                        log.debug("解析到 PART-HOLD-BACK: {}s", partHoldBack);
+                    } catch (NumberFormatException e) {
+                        log.warn("无法解析 PART-HOLD-BACK 值: {}", valueStr);
+                    }
                 }
 
                 if (line.startsWith("#EXTINF:")) {
@@ -185,6 +204,7 @@ public class HlsParser {
 
         result.put("segments", segments);
         result.put("initSegmentUrl", initSegmentUrl);
+        result.put("partHoldBack", partHoldBack);
         return result;
     }
 
