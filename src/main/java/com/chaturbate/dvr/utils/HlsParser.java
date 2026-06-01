@@ -263,6 +263,7 @@ public class HlsParser {
      * 主播放列表信息（包含视频流和音频流）
      */
     public static class MasterPlaylistInfo {
+        private String format; // "fmp4" 或 "ts"
         private List<StreamInfo> videoStreams;
         private List<AudioStreamInfo> audioStreams;
         private String selectedVideoChunklist;  // 新增：选择的视频chunklist
@@ -283,7 +284,10 @@ public class HlsParser {
         /**
          * 根据 GROUP-ID 获取对应的音频流
          */
-        public AudioStreamInfo getAudioStreamByGroupId(String groupId) {
+        public String getFormat() { return format; }
+    public void setFormat(String format) { this.format = format; }
+
+    public AudioStreamInfo getAudioStreamByGroupId(String groupId) {
             if (audioStreams == null) return null;
             return audioStreams.stream()
                     .filter(a -> groupId.equals(a.getGroupId()))
@@ -378,5 +382,41 @@ public class HlsParser {
 
         public double getDuration() { return duration; }
         public void setDuration(double duration) { this.duration = duration; }
+    }
+
+
+    /**
+     * 判断 chunklist 是否为 TS 格式（传统 HLS）
+     */
+    public static boolean isTsFormat(String chunklistContent) {
+        if (chunklistContent == null) return false;
+        return !chunklistContent.contains("#EXT-X-MAP");
+    }
+
+    /**
+     * 解析 TS 格式的 chunklist（传统 HLS）
+     */
+    public static List<SegmentInfo> parseTsChunklist(String chunklistContent) {
+        List<SegmentInfo> segments = new ArrayList<>();
+        if (chunklistContent == null || !chunklistContent.contains("#EXTINF")) {
+            return segments;
+        }
+
+        String[] lines = chunklistContent.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i].trim();
+            if (line.startsWith("#EXTINF")) {
+                for (int j = i + 1; j < lines.length; j++) {
+                    String urlLine = lines[j].trim();
+                    if (!urlLine.isEmpty() && !urlLine.startsWith("#")) {
+                        SegmentInfo segment = new SegmentInfo();
+                        segment.setUrl(urlLine);
+                        segments.add(segment);
+                        break;
+                    }
+                }
+            }
+        }
+        return segments;
     }
 }

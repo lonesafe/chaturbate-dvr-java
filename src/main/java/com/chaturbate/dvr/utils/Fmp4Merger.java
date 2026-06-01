@@ -9,6 +9,7 @@ import org.mp4parser.boxes.sampleentry.VisualSampleEntry;
 import java.io.File;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -31,10 +32,22 @@ public class Fmp4Merger {
      * @throws IOException 如果读写失败
      */
     public static void merge(Path initFile, List<Path> segmentFiles, Path outputFile) throws IOException {
+        // 空检查
+        if (initFile == null || !Files.exists(initFile) || initFile.toFile().length() == 0) {
+            throw new IOException("Init file is null, missing, or empty: " + initFile);
+        }
+        if (segmentFiles == null || segmentFiles.isEmpty()) {
+            throw new IOException("Segment files list is null or empty");
+        }
+        
         IsoFile initIso = new IsoFile(initFile.toFile());
         
         // 1. 获取 init 中的 moov
-        MovieBox moov = initIso.getBoxes(MovieBox.class).get(0);
+        List<MovieBox> moovBoxes = initIso.getBoxes(MovieBox.class);
+        if (moovBoxes.isEmpty()) {
+            throw new IOException("No moov box found in init file: " + initFile);
+        }
+        MovieBox moov = moovBoxes.get(0);
         
         // 2. 创建输出文件
         try (FileChannel channel = new java.io.FileOutputStream(outputFile.toFile()).getChannel()) {
