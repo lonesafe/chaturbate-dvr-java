@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  dvr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chaturbate-dvr
+    restart: unless-stopped
+    ports:
+      - "8080:80"       # nginx 监听容器内 80 端口
+    volumes:
+      - ./recordings:/app/recordings   # 录制文件持久化
+      - ./data:/app/data               # H2 数据库文件持久化
+      - ./tmp:/app/tmp                 # 临时文件目录
+    environment:
+      # JAVA_OPTS 可按需调整堆内存等参数
+      - JAVA_OPTS=-Xmx512m
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:80/api/config/cookie"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

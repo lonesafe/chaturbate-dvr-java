@@ -1,0 +1,18 @@
+# 排除 IDE 和版本控制
+.git
+.gitignore
+*.md
+
+# 排除 IDE 配置
+.idea
+*.iml
+.vscode
+
+# 排除本地数据文件（映射到 volume）
+data/
+recordings/
+tmp/
+
+# 排除日志
+*.log
+logs/

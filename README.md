@@ -169,6 +169,72 @@ Chaturbate 使用两种 HLS 格式：
 4. 每个轮询周期结束后实时合并
 5. 直播结束时清理临时文件
 
+## Docker 部署
+
+### 环境要求
+- Docker 20.10+
+- Docker Compose 2.0+
+
+### 快速启动
+
+```bash
+# 进入项目目录
+cd chaturbate-dvr-java
+
+# 构建并启动（自动构建前端+后端）
+docker-compose up -d --build
+```
+
+访问：http://localhost:8080/app/
+
+### 目录说明
+
+| 宿主机目录 | 容器内路径 | 说明 |
+|-----------|-----------|------|
+| `./recordings` | `/app/recordings` | 录制文件（持久化） |
+| `./data` | `/app/data` | H2 数据库文件（持久化） |
+| `./tmp` | `/app/tmp` | 临时文件（录制后自动清理） |
+
+### 常用命令
+
+```bash
+# 查看日志
+docker-compose logs -f
+
+# 停止服务
+docker-compose down
+
+# 重启服务
+docker-compose restart
+
+# 重新构建（代码变更后）
+docker-compose up -d --build
+```
+
+### 访问地址
+
+| 服务 | 地址 |
+|------|------|
+| 前端页面 | http://localhost:8080/app/ |
+| H2 控制台 | http://localhost:8080/h2-console |
+| API 接口 | http://localhost:8080/api/ |
+
+> H2 控制台 JDBC URL：`jdbc:h2:./data/dvr`，用户名 `sa`，密码留空。
+
+### 健康检查
+
+容器内置健康检查，每 30 秒检测 `/api/config/cookie` 接口，3 次失败后自动重启。
+
+### 注意事项
+
+1. **首次构建**较慢（Maven 依赖下载），后续构建会利用 Docker 缓存
+2. 确保宿主机 `8080` 端口未被占用
+3. 录制文件存储在宿主机 `./recordings` 目录，重启容器不会丢失数据
+4. `cf_clearance` cookie 绑定来源 IP，Docker 容器内获取的 cookie 适用于容器 IP
+
+
+---
+
 ## 注意事项
 
 1. **Cookie有效期**: cf_clearance cookie会过期，需要定期更新
