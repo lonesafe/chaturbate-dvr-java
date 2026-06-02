@@ -90,6 +90,9 @@ public class ChannelController {
 
         channelMapper.insert(channel);
 
+        // 刷新内存中的频道列表，确保新频道立即被监控
+        channelMonitorTask.refreshEnabledChannels();
+
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
         result.put("message", "添加成功");
@@ -109,6 +112,9 @@ public class ChannelController {
 
         channel.setId(id);
         channelMapper.update(channel);
+
+        // 刷新内存中的频道列表
+        channelMonitorTask.refreshEnabledChannels();
 
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
@@ -133,6 +139,9 @@ public class ChannelController {
 
         channelMapper.deleteById(id);
 
+        // 刷新内存中的频道列表
+        channelMonitorTask.refreshEnabledChannels();
+
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
         result.put("message", "删除成功");
@@ -151,6 +160,9 @@ public class ChannelController {
 
         channel.setEnabled(!channel.getEnabled());
         channelMapper.update(channel);
+
+        // 刷新内存中的频道列表
+        channelMonitorTask.refreshEnabledChannels();
 
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
