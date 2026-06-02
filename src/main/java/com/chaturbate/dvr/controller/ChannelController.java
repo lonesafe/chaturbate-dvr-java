@@ -4,6 +4,7 @@ import com.chaturbate.dvr.entity.Channel;
 import com.chaturbate.dvr.mapper.ChannelMapper;
 import com.chaturbate.dvr.service.ChaturbateApiService;
 import com.chaturbate.dvr.service.HlsRecorder;
+import com.chaturbate.dvr.task.ChannelMonitorTask;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -22,6 +23,7 @@ public class ChannelController {
     private final ChannelMapper channelMapper;
     private final HlsRecorder hlsRecorder;
     private final ChaturbateApiService apiService;
+    private final ChannelMonitorTask channelMonitorTask;
 
     /**
      * 获取所有直播间
@@ -40,11 +42,27 @@ public class ChannelController {
     }
 
     /**
-     * 获取正在录制的直播间
+     * 获取正在录制的直播间（从内存获取）
      */
     @GetMapping("/recording")
-    public ResponseEntity<List<Channel>> listRecording() {
-        return ResponseEntity.ok(channelMapper.selectRecording());
+    public ResponseEntity<?> listRecording() {
+        List<String> recordingUsers = hlsRecorder.getRecordingUsernames();
+        List<Channel> recordingChannels = new ArrayList<>();
+        for (String username : recordingUsers) {
+            Channel channel = channelMapper.selectByUsername(username);
+            if (channel != null) {
+                recordingChannels.add(channel);
+            }
+        }
+        return ResponseEntity.ok(recordingChannels);
+    }
+
+    /**
+     * 获取所有频道的当前状态（从内存获取）
+     */
+    @GetMapping("/statuses")
+    public ResponseEntity<Map<String, String>> getChannelStatuses() {
+        return ResponseEntity.ok(channelMonitorTask.getChannelStatuses());
     }
 
     /**
@@ -69,7 +87,6 @@ public class ChannelController {
         channel.setUsername(username.trim());
         channel.setDisplayName(displayName != null ? displayName : username);
         channel.setEnabled(true);
-        channel.setRecording(false);
 
         channelMapper.insert(channel);
 
@@ -163,12 +180,6 @@ public class ChannelController {
                 return ResponseEntity.badRequest().body("该直播间已在录制中");
             }
 
-            // 更新数据库状态
-            Channel channel = channelMapper.selectByUsername(username);
-            if (channel != null) {
-                channelMapper.updateRecordingStatus(channel.getId(), true, context.getRoomStatus());
-            }
-
             // 开始录制
             String taskId = hlsRecorder.startRecording(username, hlsSource);
 
@@ -195,14 +206,8 @@ public class ChannelController {
                 return ResponseEntity.badRequest().body("该直播间未在录制");
             }
 
-            // 停止录制（会立即合并未合并的分片）
+            // 停止录制（会自动从录制中列表移除）
             hlsRecorder.stopRecording(username);
-
-            // 更新数据库状态
-            Channel channel = channelMapper.selectByUsername(username);
-            if (channel != null) {
-                channelMapper.updateRecordingStatus(channel.getId(), false, channel.getLastStatus());
-            }
 
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);

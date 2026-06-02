@@ -33,11 +33,6 @@ public interface ChannelMapper {
     List<Channel> selectAll();
     
     /**
-     * 查询正在录制的直播间
-     */
-    List<Channel> selectRecording();
-    
-    /**
      * 插入
      */
     int insert(Channel channel);
@@ -46,13 +41,6 @@ public interface ChannelMapper {
      * 更新
      */
     int update(Channel channel);
-    
-    /**
-     * 更新录制状态
-     */
-    int updateRecordingStatus(@Param("id") Long id, 
-                               @Param("recording") Boolean recording,
-                               @Param("lastStatus") String lastStatus);
     
     /**
      * 删除

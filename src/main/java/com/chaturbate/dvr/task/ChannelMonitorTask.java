@@ -5,14 +5,18 @@ import com.chaturbate.dvr.entity.Channel;
 import com.chaturbate.dvr.mapper.ChannelMapper;
 import com.chaturbate.dvr.service.ChaturbateApiService;
 import com.chaturbate.dvr.service.HlsRecorder;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * 直播间监控定时任务
@@ -30,19 +34,42 @@ public class ChannelMonitorTask {
     @Value("${dvr.preferred-quality:720p}")
     private String preferredQuality;
 
+    /** 启用的频道内存列表（从数据库加载） */
+    private final CopyOnWriteArrayList<Channel> enabledChannels = new CopyOnWriteArrayList<>();
+    
+    /** 频道状态映射（username -> roomStatus），由定时任务更新 */
+    private final ConcurrentHashMap<String, String> channelStatuses = new ConcurrentHashMap<>();
+
+    /**
+     * 启动时从数据库加载启用的频道
+     */
+    @PostConstruct
+    public void loadEnabledChannels() {
+        refreshEnabledChannels();
+    }
+
+    /**
+     * 刷新启用的频道列表（供外部调用）
+     */
+    public void refreshEnabledChannels() {
+        List<Channel> channels = channelMapper.selectAllEnabled();
+        enabledChannels.clear();
+        enabledChannels.addAll(channels);
+        log.info("已加载 {} 个启用的直播间", enabledChannels.size());
+    }
+
     /**
      * 定期检查直播间状态 (默认每30秒)
      */
     @Scheduled(fixedDelayString = "${dvr.check-interval-seconds:30}000")
     public void checkChannels() {
-        List<Channel> channels = channelMapper.selectAllEnabled();
-        if (channels.isEmpty()) {
+        if (enabledChannels.isEmpty()) {
             return;
         }
 
-        log.debug("开始检查 {} 个直播间状态", channels.size());
+        log.debug("开始检查 {} 个直播间状态", enabledChannels.size());
 
-        for (Channel channel : channels) {
+        for (Channel channel : enabledChannels) {
             try {
                 checkChannel(channel);
             } catch (Exception e) {
@@ -63,16 +90,13 @@ public class ChannelMonitorTask {
             return;
         }
 
-        String roomStatus = context.getRoomStatus();
+        // 更新频道状态到内存映射
+        channelStatuses.put(username, context.getRoomStatus());
+        
         boolean isPublic = context.isPublicLive();
         boolean isRecording = hlsRecorder.isRecording(username);
 
-        // 更新最后状态
-        channel.setLastStatus(roomStatus);
-        channel.setLastCheckTime(LocalDateTime.now());
-        channelMapper.update(channel);
-
-        log.debug("直播间 [{}] 状态: {}, 录制中: {}", username, roomStatus, isRecording);
+        log.debug("直播间 [{}] 状态: {}, 录制中: {}", username, context.getRoomStatus(), isRecording);
 
         if (isPublic && !isRecording) {
             // 开始录制
@@ -95,14 +119,10 @@ public class ChannelMonitorTask {
             return;
         }
 
-        // 更新频道录制状态
-        channel.setRecording(true);
-        channelMapper.updateRecordingStatus(channel.getId(), true, "public");
-
-        // 开始录制
+        // 开始录制（HlsRecorder 会自动维护录制中的列表）
         String taskId = hlsRecorder.startRecording(username, hlsSource);
 
-        log.info("直播间 [{}] 开始录制, 任务ID: {}, HLS: {}", username, taskId, hlsSource);
+        log.info("直播间 [{}] 开始录制, 任务ID: {}", username, taskId);
     }
 
     /**
@@ -111,13 +131,23 @@ public class ChannelMonitorTask {
     private void stopRecording(Channel channel) {
         String username = channel.getUsername();
 
-        // 停止录制器（会立即合并未合并的分片）
+        // 停止录制器（会自动从录制中列表移除）
         hlsRecorder.stopRecording(username);
 
-        // 更新频道状态
-        channel.setRecording(false);
-        channelMapper.updateRecordingStatus(channel.getId(), false, channel.getLastStatus());
-
         log.info("直播间 [{}] 停止录制", username);
+    }
+
+    /**
+     * 获取所有频道的当前状态
+     */
+    public Map<String, String> getChannelStatuses() {
+        return new HashMap<>(channelStatuses);
+    }
+
+    /**
+     * 获取单个频道的当前状态
+     */
+    public String getChannelStatus(String username) {
+        return channelStatuses.get(username);
     }
 }

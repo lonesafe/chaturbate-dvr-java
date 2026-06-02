@@ -34,6 +34,7 @@ export const channelApi = {
   getAll: () => api.get('/channels'),
   getEnabled: () => api.get('/channels/enabled'),
   getRecording: () => api.get('/channels/recording'),
+  getStatuses: () => api.get('/channels/statuses'),
   add: (data) => api.post('/channels', data),
   update: (id, data) => api.put(`/channels/${id}`, data),
   delete: (id) => api.delete(`/channels/${id}`),

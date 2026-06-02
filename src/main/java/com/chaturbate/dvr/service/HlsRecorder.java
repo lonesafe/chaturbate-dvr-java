@@ -1,6 +1,5 @@
 package com.chaturbate.dvr.service;
 
-import com.chaturbate.dvr.mapper.ChannelMapper;
 import com.chaturbate.dvr.utils.HlsParser;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -97,9 +96,6 @@ public class HlsRecorder {
         return configService.getConfigValueAsInt("download_threads", 4);
     }
 
-    @Autowired
-    private ChannelMapper channelMapper;
-
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private final ConcurrentHashMap<String, RecordingTask> activeRecordings = new ConcurrentHashMap<>();
 
@@ -125,8 +121,6 @@ public class HlsRecorder {
             } finally {
                 task.cleanup();
                 activeRecordings.remove(username);
-                // 更新数据库录制状态为未录制
-                updateChannelRecordingStatus(username, false);
             }
         });
 
@@ -157,6 +151,13 @@ public class HlsRecorder {
      */
     public RecordingTask getRecordingTask(String username) {
         return activeRecordings.get(username);
+    }
+
+    /**
+     * 获取正在录制的用户名列表
+     */
+    public List<String> getRecordingUsernames() {
+        return new ArrayList<>(activeRecordings.keySet());
     }
 
     /**
@@ -201,9 +202,6 @@ public class HlsRecorder {
     private void doRecording(RecordingTask task) throws Exception {
         final int MAX_REFRESH_RETRIES = 3;
         int refreshCount = 0;
-        
-        // 更新频道录制状态为录制中
-        updateChannelRecordingStatus(task.getUsername(), true);
         
         // 当前使用的 chunklist URLs
         String[] currentVideoUrl = {null};
@@ -653,6 +651,80 @@ public class HlsRecorder {
         } else {
             log.warn("没有生成任何 part 文件，录制可能失败");
         }
+
+        // 9. 清理临时文件
+        cleanupTempFiles(task);
+    }
+
+    /**
+     * 清理临时文件和文件夹
+     * 删除 tmpDir 和 outputDir（如果为空）
+     */
+    private void cleanupTempFiles(RecordingTask task) {
+        Path tmpDir = task.getTmpDir();
+        Path outputDir = task.getOutputDir();
+
+        // 删除 tmpDir
+        if (tmpDir != null && Files.exists(tmpDir)) {
+            try {
+                deleteDirectory(tmpDir);
+                log.info("已删除临时目录: {}", tmpDir);
+            } catch (Exception e) {
+                log.warn("删除临时目录失败: {} - {}", tmpDir, e.getMessage());
+            }
+        }
+
+        // 删除 outputDir（如果为空）
+        if (outputDir != null && Files.exists(outputDir)) {
+            try {
+                if (isDirectoryEmpty(outputDir)) {
+                    Files.delete(outputDir);
+                    log.info("已删除空目录: {}", outputDir);
+                } else {
+                    log.debug("输出目录不为空，保留: {} (内含: {})", outputDir, listDirectoryContents(outputDir));
+                }
+            } catch (Exception e) {
+                log.warn("删除输出目录失败: {} - {}", outputDir, e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * 递归删除目录及其所有内容
+     */
+    private void deleteDirectory(Path dir) throws IOException {
+        if (!Files.exists(dir)) return;
+
+        try (java.util.stream.Stream<Path> walk = Files.walk(dir)) {
+            walk.sorted(java.util.Comparator.comparing(Path::toString).reversed())
+                .forEach(p -> {
+                    try {
+                        Files.deleteIfExists(p);
+                    } catch (IOException e) {
+                        log.warn("删除文件失败: {} - {}", p, e.getMessage());
+                    }
+                });
+        }
+    }
+
+    /**
+     * 检查目录是否为空
+     */
+    private boolean isDirectoryEmpty(Path dir) throws IOException {
+        try (java.util.stream.Stream<Path> entries = Files.list(dir)) {
+            return entries.findFirst().isEmpty();
+        }
+    }
+
+    /**
+     * 列出目录内容（用于日志）
+     */
+    private String listDirectoryContents(Path dir) {
+        try (java.util.stream.Stream<Path> entries = Files.list(dir)) {
+            return entries.map(Path::getFileName).map(Path::toString).collect(java.util.stream.Collectors.joining(", "));
+        } catch (IOException e) {
+            return "<无法读取>";
+        }
     }
 
     /**
@@ -810,10 +882,6 @@ public class HlsRecorder {
      */
     private boolean isValidInitFile(Path initFile) {
         if (initFile == null || !Files.exists(initFile)) {
-            return false;
-        }
-        long size = initFile.toFile().length();
-        if (size < 1000) {  // init 文件通常 > 1KB
             return false;
         }
         try {
@@ -1330,23 +1398,6 @@ public class HlsRecorder {
     }
 
     /**
-     * 更新频道录制状态到数据库
-     */
-    private void updateChannelRecordingStatus(String username, boolean recording) {
-        try {
-            ChannelMapper mapper = this.channelMapper;
-            if (mapper != null) {
-                com.chaturbate.dvr.entity.Channel channel = mapper.selectByUsername(username);
-                if (channel != null) {
-                    mapper.updateRecordingStatus(channel.getId(), recording, channel.getLastStatus());
-                }
-            }
-        } catch (Exception e) {
-            log.warn("更新频道 [{}] 录制状态失败: {}", username, e.getMessage());
-        }
-    }
-
-    /**
      * 下载并合并循环（TS 格式 - 传统 HLS）
      * 每个 m3u8/chunklist 下载完成后立即合并到最终文件
      */
@@ -1514,6 +1565,9 @@ public class HlsRecorder {
         resultQueue.drainTo(new ArrayList<>());
 
         log.info("TS格式录制结束: {}", finalOutput != null ? finalOutput.getFileName() : "无输出文件");
+
+        // 清理临时文件
+        cleanupTempFiles(task);
     }
 
     /**

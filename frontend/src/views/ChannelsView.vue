@@ -55,14 +55,14 @@
         </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <span class="status-badge" :class="getStatusClass(row.lastStatus)">
-              {{ getStatusText(row.lastStatus) }}
+            <span class="status-badge" :class="getStatusClass(channelStatuses[row.username])">
+              {{ getStatusText(channelStatuses[row.username]) }}
             </span>
           </template>
         </el-table-column>
         <el-table-column label="录制状态" width="100">
           <template #default="{ row }">
-            <el-tag v-if="row.recording" type="danger" size="small">
+            <el-tag v-if="recordingUsernames.includes(row.username)" type="danger" size="small">
               录制中
             </el-tag>
             <el-tag v-else type="info" size="small">
@@ -82,7 +82,7 @@
         <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
             <el-button 
-              v-if="row.recording"
+              v-if="recordingUsernames.includes(row.username)"
               type="danger" 
               size="small"
               @click="handleStopRecording(row)"
@@ -90,7 +90,7 @@
               停止录制
             </el-button>
             <el-button 
-              v-else-if="row.lastStatus === 'public'"
+              v-else-if="channelStatuses[row.username] === 'public'"
               type="primary" 
               size="small"
               @click="handleStartRecording(row)"
@@ -215,6 +215,15 @@ const loading = ref(false)
 const filter = ref('all')
 const searchText = ref('')
 
+// 录制状态（从内存获取，非数据库）
+const recordingUsernames = ref([])
+
+// 频道状态映射（从ChannelMonitorTask获取）
+const channelStatuses = ref({})
+
+// 状态轮询定时器
+const statusesTimer = ref(null)
+
 // 下载信息（实时更新）
 const downloadInfo = ref({})
 const downloadInfoTimer = ref(null)
@@ -258,13 +267,13 @@ const editForm = ref({ id: null, username: '', displayName: '' })
 const filteredChannels = computed(() => {
   let list = store.channels
   
-  // 筛选
+  // 筛选（使用内存中的状态）
   if (filter.value === 'online') {
-    list = list.filter(c => c.lastStatus === 'public')
+    list = list.filter(c => channelStatuses.value[c.username] === 'public')
   } else if (filter.value === 'recording') {
-    list = list.filter(c => c.recording)
+    list = list.filter(c => recordingUsernames.value.includes(c.username))
   } else if (filter.value === 'offline') {
-    list = list.filter(c => c.lastStatus === 'offline')
+    list = list.filter(c => channelStatuses.value[c.username] === 'offline')
   }
   
   // 搜索
@@ -353,7 +362,7 @@ const handleEdit = async () => {
 const handleDelete = async (channel) => {
   try {
     await ElMessageBox.confirm(
-      `确定删除直播间 "${channel.username}" 吗？${channel.recording ? '（当前正在录制，将先停止）' : ''}`,
+      `确定删除直播间 "${channel.username}" 吗？${recordingUsernames.value.includes(channel.username) ? '（当前正在录制，将先停止）' : ''}`,
       '确认删除',
       { type: 'warning' }
     )
@@ -454,8 +463,7 @@ const stopDownloadsRefresh = () => {
 
 // 获取所有正在录制的频道的下载信息
 const fetchDownloadInfo = async () => {
-  const recordingChannels = store.channels.filter(c => c.recording)
-  if (recordingChannels.length === 0) {
+  if (recordingUsernames.value.length === 0) {
     // 没有正在录制的频道，停止轮询
     if (downloadInfoTimer.value) {
       clearInterval(downloadInfoTimer.value)
@@ -464,12 +472,12 @@ const fetchDownloadInfo = async () => {
     return
   }
 
-  for (const channel of recordingChannels) {
+  for (const username of recordingUsernames.value) {
     try {
-      const res = await channelApi.getDownloadInfo(channel.username)
-      downloadInfo.value[channel.username] = res
+      const res = await channelApi.getDownloadInfo(username)
+      downloadInfo.value[username] = res
     } catch (e) {
-      console.error(`获取 ${channel.username} 下载信息失败:`, e)
+      console.error(`获取 ${username} 下载信息失败:`, e)
     }
   }
 }
@@ -490,15 +498,53 @@ const stopDownloadInfoPolling = () => {
   }
 }
 
+// 获取录制列表
+const fetchRecordingList = async () => {
+  try {
+    const res = await channelApi.getRecording()
+    recordingUsernames.value = res.map(c => c.username)
+  } catch (e) {
+    console.error('获取录制列表失败:', e)
+  }
+}
+
+// 获取频道状态
+const fetchChannelStatuses = async () => {
+  try {
+    const res = await channelApi.getStatuses()
+    channelStatuses.value = res || {}
+  } catch (e) {
+    console.error('获取频道状态失败:', e)
+  }
+}
+
+// 启动状态轮询
+const startStatusesPolling = () => {
+  if (statusesTimer.value) return
+  // 立即获取一次
+  fetchRecordingList()
+  fetchChannelStatuses()
+  // 每10秒轮询一次
+  statusesTimer.value = setInterval(() => {
+    fetchRecordingList()
+    fetchChannelStatuses()
+  }, 10000)
+}
+
+const stopStatusesPolling = () => {
+  if (statusesTimer.value) {
+    clearInterval(statusesTimer.value)
+    statusesTimer.value = null
+  }
+}
+
 // 生命周期
 onMounted(async () => {
   loading.value = true
   try {
     await store.fetchChannels()
-    // 检查是否有正在录制的频道，启动下载信息轮询
-    if (store.channels.some(c => c.recording)) {
-      startDownloadInfoPolling()
-    }
+    // 启动状态轮询（包含录制列表和频道状态）
+    startStatusesPolling()
   } finally {
     loading.value = false
   }
@@ -506,6 +552,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopDownloadInfoPolling()
+  stopStatusesPolling()
 })
 </script>
 

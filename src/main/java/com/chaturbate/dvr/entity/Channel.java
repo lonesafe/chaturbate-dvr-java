@@ -3,7 +3,8 @@ package com.chaturbate.dvr.entity;
 import java.time.LocalDateTime;
 
 /**
- * 直播间实体
+ * 直播间实体（简化版）
+ * 只保留数据库必要字段，状态信息从内存获取
  */
 public class Channel {
     
@@ -18,15 +19,6 @@ public class Channel {
     
     /** 是否启用监控 */
     private Boolean enabled;
-    
-    /** 是否正在录制 */
-    private Boolean recording;
-    
-    /** 最后状态(public/private/offline) */
-    private String lastStatus;
-    
-    /** 最后检查时间 */
-    private LocalDateTime lastCheckTime;
     
     /** 创建时间 */
     private LocalDateTime createdAt;
@@ -46,15 +38,6 @@ public class Channel {
 
     public Boolean getEnabled() { return enabled; }
     public void setEnabled(Boolean enabled) { this.enabled = enabled; }
-
-    public Boolean getRecording() { return recording; }
-    public void setRecording(Boolean recording) { this.recording = recording; }
-
-    public String getLastStatus() { return lastStatus; }
-    public void setLastStatus(String lastStatus) { this.lastStatus = lastStatus; }
-
-    public LocalDateTime getLastCheckTime() { return lastCheckTime; }
-    public void setLastCheckTime(LocalDateTime lastCheckTime) { this.lastCheckTime = lastCheckTime; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

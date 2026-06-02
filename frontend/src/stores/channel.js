@@ -9,15 +9,13 @@ export const useChannelStore = defineStore('channel', () => {
 
   // Getters
   const enabledChannels = computed(() => channels.value.filter(c => c.enabled))
-  const recordingChannels = computed(() => channels.value.filter(c => c.recording))
-  const onlineChannels = computed(() => channels.value.filter(c => c.lastStatus === 'public'))
   
   const stats = computed(() => ({
     total: channels.value.length,
-    online: onlineChannels.value.length,
-    recording: recordingChannels.value.length,
-    offline: channels.value.filter(c => c.lastStatus === 'offline').length,
-    private: channels.value.filter(c => c.lastStatus === 'private').length
+    online: 0,  // 从 ChannelsView.vue 的 channelStatuses 获取
+    recording: 0,  // 从 ChannelsView.vue 的 recordingUsernames 获取
+    offline: 0,
+    private: 0
   }))
 
   // Actions
@@ -59,8 +57,6 @@ export const useChannelStore = defineStore('channel', () => {
     channels,
     loading,
     enabledChannels,
-    recordingChannels,
-    onlineChannels,
     stats,
     fetchChannels,
     addChannel,

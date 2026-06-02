@@ -9,16 +9,12 @@
         <result column="username" property="username"/>
         <result column="display_name" property="displayName"/>
         <result column="is_enabled" property="enabled"/>
-        <result column="is_recording" property="recording"/>
-        <result column="last_status" property="lastStatus"/>
-        <result column="last_check_time" property="lastCheckTime"/>
         <result column="created_at" property="createdAt"/>
         <result column="updated_at" property="updatedAt"/>
     </resultMap>
 
     <sql id="Base_Column_List">
-        id, username, display_name, is_enabled, is_recording, 
-        last_status, last_check_time, created_at, updated_at
+        id, username, display_name, is_enabled, created_at, updated_at
     </sql>
 
     <select id="selectById" resultMap="BaseResultMap">
@@ -46,15 +42,9 @@
         ORDER BY created_at DESC
     </select>
 
-    <select id="selectRecording" resultMap="BaseResultMap">
-        SELECT <include refid="Base_Column_List"/>
-        FROM channel
-        WHERE is_recording = 1
-    </select>
-
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO channel (username, display_name, is_enabled, is_recording, last_status)
-        VALUES (#{username}, #{displayName}, #{enabled}, #{recording}, #{lastStatus})
+        INSERT INTO channel (username, display_name, is_enabled)
+        VALUES (#{username}, #{displayName}, #{enabled})
     </insert>
 
     <update id="update">
@@ -62,19 +52,8 @@
         <set>
             <if test="displayName != null">display_name = #{displayName},</if>
             <if test="enabled != null">is_enabled = #{enabled},</if>
-            <if test="recording != null">is_recording = #{recording},</if>
-            <if test="lastStatus != null">last_status = #{lastStatus},</if>
-            last_check_time = NOW()
-        </set>
-        WHERE id = #{id}
-    </update>
-
-    <update id="updateRecordingStatus">
-        UPDATE channel
-        SET is_recording = #{recording},
-            last_status = #{lastStatus},
-            last_check_time = NOW(),
             updated_at = NOW()
+        </set>
         WHERE id = #{id}
     </update>
 
