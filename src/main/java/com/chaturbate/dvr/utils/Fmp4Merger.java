@@ -1,30 +1,21 @@
 package com.chaturbate.dvr.utils;
 
-import org.mp4parser.Container;
-import org.mp4parser.IsoFile;
-import org.mp4parser.boxes.iso14496.part12.*;
-import org.mp4parser.boxes.sampleentry.AudioSampleEntry;
-import org.mp4parser.boxes.sampleentry.VisualSampleEntry;
-
-import java.io.File;
-import java.io.IOException;
-import java.nio.channels.FileChannel;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.io.*;
+import java.nio.file.*;
 import java.util.List;
 
 /**
- * fMP4 合并工具类（基于 isoparser）
+ * fMP4 合并工具类（基于二进制拼接）
  * 
- * 将 init segment (moov) 和多个 media segments (moof+mdat) 
+ * 将 init segment (moov) 和多个 media segments (moof+mdat)
  * 合并为一个可播放的 MP4 文件
  * 
- * 注意：此实现适用于简单的 fMP4 场景
+ * 原理：直接拼接二进制数据，init + segments 顺序写入
  */
 public class Fmp4Merger {
 
     /**
-     * 合并 fMP4 片段
+     * 合并 fMP4 片段（二进制拼接方式）
      * 
      * @param initFile init segment 文件（包含 moov box）
      * @param segmentFiles media segment 文件列表（每个包含 moof+mdat）
@@ -33,55 +24,47 @@ public class Fmp4Merger {
      */
     public static void merge(Path initFile, List<Path> segmentFiles, Path outputFile) throws IOException {
         // 空检查
-        if (initFile == null || !Files.exists(initFile) || initFile.toFile().length() == 0) {
+        if (initFile == null || !Files.exists(initFile) || Files.size(initFile) == 0) {
             throw new IOException("Init file is null, missing, or empty: " + initFile);
         }
         if (segmentFiles == null || segmentFiles.isEmpty()) {
             throw new IOException("Segment files list is null or empty");
         }
         
-        IsoFile initIso = new IsoFile(initFile.toFile());
-        
-        // 1. 获取 init 中的 moov
-        List<MovieBox> moovBoxes = initIso.getBoxes(MovieBox.class);
-        if (moovBoxes.isEmpty()) {
-            throw new IOException("No moov box found in init file: " + initFile);
+        // 验证 init 文件包含 moov
+        if (!hasMoov(initFile)) {
+            throw new IOException("Init file does not contain moov box: " + initFile);
         }
-        MovieBox moov = moovBoxes.get(0);
         
-        // 2. 创建输出文件
-        try (FileChannel channel = new java.io.FileOutputStream(outputFile.toFile()).getChannel()) {
+        // 二进制拼接：init + 所有 segments
+        try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(outputFile))) {
+            // 1. 写入 init 文件（包含 ftyp + moov）
+            Files.copy(initFile, out);
             
-            // 写入 ftyp
-            List<FileTypeBox> ftypBoxes = initIso.getBoxes(FileTypeBox.class);
-            if (!ftypBoxes.isEmpty()) {
-                ftypBoxes.get(0).getBox(channel);
-            }
-            
-            // 写入 moov
-            moov.getBox(channel);
-            
-            // 3. 逐个写入 segment 的 moof + mdat
+            // 2. 逐个写入 segment 文件（包含 moof + mdat）
             for (Path segPath : segmentFiles) {
-                IsoFile segIso = new IsoFile(segPath.toFile());
-                
-                // 写入 moof
-                List<MovieFragmentBox> moofBoxes = segIso.getBoxes(MovieFragmentBox.class);
-                for (MovieFragmentBox moof : moofBoxes) {
-                    moof.getBox(channel);
+                if (!Files.exists(segPath) || Files.size(segPath) == 0) {
+                    throw new IOException("Segment file is null, missing, or empty: " + segPath);
                 }
-                
-                // 写入 mdat
-                List<MediaDataBox> mdatBoxes = segIso.getBoxes(MediaDataBox.class);
-                for (MediaDataBox mdat : mdatBoxes) {
-                    mdat.getBox(channel);
-                }
-                
-                segIso.close();
+                Files.copy(segPath, out);
             }
         }
-        
-        initIso.close();
+    }
+    
+    /**
+     * 检查文件是否包含 moov box
+     */
+    private static boolean hasMoov(Path file) throws IOException {
+        try (InputStream in = Files.newInputStream(file)) {
+            byte[] header = new byte[8];
+            int read = in.read(header);
+            if (read < 8) return false;
+            // 读取 box size 和 type
+            long size = ((header[0] & 0xFF) << 24) | ((header[1] & 0xFF) << 16) 
+                      | ((header[2] & 0xFF) << 8) | (header[3] & 0xFF);
+            String type = new String(header, 4, 4, "ISO-8859-1");
+            return "moov".equals(type);
+        }
     }
     
     /**
@@ -99,6 +82,5 @@ public class Fmp4Merger {
         merge(audioInit, audioSegs, audioOnly);
         
         // 3. 调用 ffmpeg 混合（由 HlsRecorder 负责）
-        // ffmpeg -i video_only.mp4 -i audio_only.mp4 -c copy output.mp4
     }
 }

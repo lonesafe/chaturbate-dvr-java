@@ -21,10 +21,6 @@
           <el-icon><UserFilled /></el-icon>
           <span>直播间管理</span>
         </el-menu-item>
-        <el-menu-item index="/recordings">
-          <el-icon><VideoPlay /></el-icon>
-          <span>录制记录</span>
-        </el-menu-item>
         <el-menu-item index="/settings">
           <el-icon><Setting /></el-icon>
           <span>系统设置</span>
@@ -67,10 +63,7 @@ const recordingCount = computed(() => channelStore.recordingChannels.length)
 const refreshAll = async () => {
   refreshing.value = true
   try {
-    await Promise.all([
-      channelStore.fetchChannels(),
-      channelStore.fetchRecordings()
-    ])
+    await channelStore.fetchChannels()
     ElMessage.success('刷新成功')
   } catch (e) {
     ElMessage.error('刷新失败')
@@ -83,7 +76,6 @@ onMounted(() => {
   refreshAll()
   refreshTimer = setInterval(() => {
     channelStore.fetchChannels()
-    channelStore.fetchRecordings()
   }, 30000)
 })
 

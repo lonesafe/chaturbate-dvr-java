@@ -2,14 +2,13 @@ package com.chaturbate.dvr.controller;
 
 import com.chaturbate.dvr.entity.Channel;
 import com.chaturbate.dvr.mapper.ChannelMapper;
+import com.chaturbate.dvr.service.ChaturbateApiService;
+import com.chaturbate.dvr.service.HlsRecorder;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * 直播间管理控制器
@@ -21,6 +20,8 @@ import java.util.Map;
 public class ChannelController {
 
     private final ChannelMapper channelMapper;
+    private final HlsRecorder hlsRecorder;
+    private final ChaturbateApiService apiService;
 
     /**
      * 获取所有直播间
@@ -99,10 +100,20 @@ public class ChannelController {
     }
 
     /**
-     * 删除直播间
+     * 删除直播间（如果正在录制，先停止）
      */
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteChannel(@PathVariable Long id) {
+        Channel channel = channelMapper.selectById(id);
+        if (channel == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        // 如果正在录制，先停止
+        if (hlsRecorder.isRecording(channel.getUsername())) {
+            hlsRecorder.stopRecording(channel.getUsername());
+        }
+
         channelMapper.deleteById(id);
 
         Map<String, Object> result = new HashMap<>();
@@ -127,6 +138,110 @@ public class ChannelController {
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
         result.put("enabled", channel.getEnabled());
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 开始录制
+     */
+    @PostMapping("/{username}/start")
+    public ResponseEntity<?> startRecording(@PathVariable String username) {
+        try {
+            // 获取直播间信息
+            var context = apiService.getChatVideoContext(username);
+            if (context == null) {
+                return ResponseEntity.badRequest().body("无法获取直播间信息");
+            }
+
+            String hlsSource = context.getHlsSource();
+            if (hlsSource == null || hlsSource.isEmpty()) {
+                return ResponseEntity.badRequest().body("直播间当前没有HLS源");
+            }
+
+            // 检查是否已在录制
+            if (hlsRecorder.isRecording(username)) {
+                return ResponseEntity.badRequest().body("该直播间已在录制中");
+            }
+
+            // 更新数据库状态
+            Channel channel = channelMapper.selectByUsername(username);
+            if (channel != null) {
+                channelMapper.updateRecordingStatus(channel.getId(), true, context.getRoomStatus());
+            }
+
+            // 开始录制
+            String taskId = hlsRecorder.startRecording(username, hlsSource);
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("message", "开始录制成功");
+            result.put("taskId", taskId);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    /**
+     * 停止录制（会立即合并未合并的分片）
+     */
+    @PostMapping("/{username}/stop")
+    public ResponseEntity<?> stopRecording(@PathVariable String username) {
+        try {
+            if (!hlsRecorder.isRecording(username)) {
+                return ResponseEntity.badRequest().body("该直播间未在录制");
+            }
+
+            // 停止录制（会立即合并未合并的分片）
+            hlsRecorder.stopRecording(username);
+
+            // 更新数据库状态
+            Channel channel = channelMapper.selectByUsername(username);
+            if (channel != null) {
+                channelMapper.updateRecordingStatus(channel.getId(), false, channel.getLastStatus());
+            }
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("message", "停止录制成功");
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    /**
+     * 获取下载信息
+     */
+    @GetMapping("/{username}/download-info")
+    public ResponseEntity<?> getDownloadInfo(@PathVariable String username) {
+        return ResponseEntity.ok(hlsRecorder.getDownloadInfo(username));
+    }
+
+    /**
+     * 获取录制日志
+     */
+    @GetMapping("/{username}/logs")
+    public ResponseEntity<?> getLogs(@PathVariable String username) {
+        Map<String, Object> result = new HashMap<>();
+        HlsRecorder.RecordingTask task = hlsRecorder.getRecordingTask(username);
+        
+        if (task == null) {
+            result.put("success", true);
+            result.put("isRunning", false);
+            result.put("logs", Collections.emptyList());
+            return ResponseEntity.ok(result);
+        }
+
+        result.put("success", true);
+        result.put("isRunning", !task.isStopped());
+        result.put("logs", task.getLogs());
         return ResponseEntity.ok(result);
     }
 }

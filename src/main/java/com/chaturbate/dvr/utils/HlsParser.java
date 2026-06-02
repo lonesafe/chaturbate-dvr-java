@@ -1,8 +1,6 @@
 package com.chaturbate.dvr.utils;
 
 import lombok.extern.slf4j.Slf4j;
-import org.json.JSONArray;
-import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -216,7 +214,7 @@ public class HlsParser {
         int uriStart = line.indexOf("URI=");
         if (uriStart == -1) return null;
         
-        uriStart += 5; // 跳过 "URI="
+        uriStart += 4; // 跳过 "URI="
         
         // URI 可能被引号包裹
         if (line.charAt(uriStart) == '"') {

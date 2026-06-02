@@ -51,9 +51,9 @@
             <el-form-item label="录制路径">
               <el-input 
                 v-model="recordingSettings.record_path" 
-                placeholder="./recordings"
+                placeholder="./recordings/{username}/{username}-{yyyy-mm-dd}.mp4"
               />
-              <div class="form-tip">录制文件保存路径（相对或绝对路径）</div>
+              <div class="form-tip">支持占位符：{username}（用户名）、{yyyy-mm-dd}（日期）<br/>例：./recordings/{username}/{username}-{yyyy-mm-dd}.mp4</div>
             </el-form-item>
 
             <el-form-item label="临时文件路径">
@@ -113,15 +113,6 @@
               <div class="form-tip">并发下载片段的线程数</div>
             </el-form-item>
 
-            <el-form-item label="合并阈值">
-              <el-input-number 
-                v-model="advancedSettings.merge_segments" 
-                :min="5" 
-                :max="50" 
-              />
-              <div class="form-tip">每 N 个片段触发一次合并（生成 part 文件）</div>
-            </el-form-item>
-
             <el-form-item label="ffmpeg 路径">
               <el-input 
                 v-model="advancedSettings.ffmpeg_path" 
@@ -169,7 +160,6 @@ const recordingSettings = ref({
 const advancedSettings = ref({
   check_interval_seconds: 30,
   download_threads: 4,
-  merge_segments: 10,
   ffmpeg_path: 'ffmpeg'
 })
 
@@ -198,7 +188,6 @@ const loadConfigs = async () => {
         // 高级设置
         if (key === 'check_interval_seconds') advancedSettings.value.check_interval_seconds = parseInt(value)
         if (key === 'download_threads') advancedSettings.value.download_threads = parseInt(value)
-        if (key === 'merge_segments') advancedSettings.value.merge_segments = parseInt(value)
         if (key === 'ffmpeg_path') advancedSettings.value.ffmpeg_path = value
       })
     }
@@ -251,7 +240,6 @@ const saveAdvancedSettings = async () => {
     const configs = {
       'check_interval_seconds': advancedSettings.value.check_interval_seconds.toString(),
       'download_threads': advancedSettings.value.download_threads.toString(),
-      'merge_segments': advancedSettings.value.merge_segments.toString(),
       'ffmpeg_path': advancedSettings.value.ffmpeg_path
     }
     await configApi.batchUpdate(configs)

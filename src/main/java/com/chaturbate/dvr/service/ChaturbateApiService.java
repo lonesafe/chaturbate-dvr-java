@@ -6,6 +6,10 @@ import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 
@@ -47,21 +51,31 @@ public class ChaturbateApiService {
         String url = getApiBaseUrl() + URLEncoder.encode(username, StandardCharsets.UTF_8) + "/";
 
         try {
-            cn.hutool.http.HttpResponse response = cn.hutool.http.HttpRequest.get(url)
-                    .header("Cookie", getCookie())
-                    .header("User-Agent", getUserAgent())
-                    .header("Accept", "application/json")
-                    .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-                    .header("Referer", "https://zh-hans.chaturbate.com/")
-                    .timeout(30000)
-                    .execute();
+            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("Cookie", getCookie());
+            conn.setRequestProperty("User-Agent", getUserAgent());
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
+            conn.setRequestProperty("Referer", "https://zh-hans.chaturbate.com/");
+            conn.setConnectTimeout(30000);
+            conn.setReadTimeout(30000);
 
-            int statusCode = response.getStatus();
-            String responseBody = response.body();
+            int statusCode = conn.getResponseCode();
+            StringBuilder responseBody = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    statusCode >= 400 ? conn.getErrorStream() : conn.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    responseBody.append(line);
+                }
+            } finally {
+                conn.disconnect();
+            }
 
             if (statusCode == 200) {
                 // 使用 org.json 解析 JSON
-                JSONObject json = new JSONObject(responseBody);
+                JSONObject json = new JSONObject(responseBody.toString());
                 ChatVideoContext context = ChatVideoContext.fromJSONObject(json);
                 log.debug("获取直播间 [{}] 状态成功: {}", username, context.getRoomStatus());
                 return context;

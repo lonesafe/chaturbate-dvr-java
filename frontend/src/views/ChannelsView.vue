@@ -32,7 +32,7 @@
       <!-- 直播间列表 -->
       <el-table :data="filteredChannels" v-loading="loading" style="width: 100%">
         <el-table-column type="index" width="50" />
-        <el-table-column label="用户名" width="150">
+        <el-table-column label="频道" min-width="200">
           <template #default="{ row }">
             <div class="channel-name">
               <el-avatar :size="32" :style="{ background: getAvatarColor(row.username) }">
@@ -40,7 +40,6 @@
               </el-avatar>
               <div class="channel-info">
                 <div class="username">
-                  <!-- 修改：用户名可点击，跳转到直播间 -->
                   <a :href="'https://zh-hans.chaturbate.com/' + row.username + '/'"
                      target="_blank"
                      class="username-link">
@@ -54,19 +53,20 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="120">
+        <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <div class="status-cell">
-              <span class="status-dot" :class="getStatusClass(row)"></span>
-              <span>{{ getStatusText(row) }}</span>
-              <el-icon v-if="row.recording" class="recording-icon"><VideoCamera /></el-icon>
-            </div>
+            <span class="status-badge" :class="getStatusClass(row.lastStatus)">
+              {{ getStatusText(row.lastStatus) }}
+            </span>
           </template>
         </el-table-column>
-        <el-table-column label="最后状态" width="100">
+        <el-table-column label="录制状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="getLastStatusType(row.lastStatus)" size="small">
-              {{ row.lastStatus || '未知' }}
+            <el-tag v-if="row.recording" type="danger" size="small">
+              录制中
+            </el-tag>
+            <el-tag v-else type="info" size="small">
+              未录制
             </el-tag>
           </template>
         </el-table-column>
@@ -79,47 +79,35 @@
             />
           </template>
         </el-table-column>
-        <el-table-column label="最后检查" width="180">
+        <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
-            {{ formatDate(row.lastCheckTime) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
-          <template #default="{ row }">
-            <el-button-group>
-              <el-button 
-                v-if="row.lastStatus === 'public' && !row.recording"
-                type="primary" 
-                size="small"
-                @click="startRecording(row)"
-              >
-                录制
-              </el-button>
-              <el-button 
-                v-if="row.recording"
-                type="danger" 
-                size="small"
-                @click="stopRecording(row)"
-              >
-                停止
-              </el-button>
-              <el-button 
-                size="small" 
-                @click="viewLogs(row)"
-                :icon="Document"
-              >
-                日志
-              </el-button>
-              <el-button 
-                size="small" 
-                @click="viewRecordings(row)"
-                :icon="FolderOpened"
-              >
-                文件
-              </el-button>
-              <el-button size="small" @click="editChannel(row)">编辑</el-button>
-              <el-button type="danger" size="small" @click="deleteChannel(row)">删除</el-button>
-            </el-button-group>
+            <el-button 
+              v-if="row.recording"
+              type="danger" 
+              size="small"
+              @click="handleStopRecording(row)"
+            >
+              停止录制
+            </el-button>
+            <el-button 
+              v-else-if="row.lastStatus === 'public'"
+              type="primary" 
+              size="small"
+              @click="handleStartRecording(row)"
+            >
+              开始录制
+            </el-button>
+            <el-button size="small" @click="handleViewLogs(row)">日志</el-button>
+            <el-button 
+              v-if="row.recording"
+              type="warning" 
+              size="small"
+              @click="handleViewDownloads(row)"
+            >
+              下载监控
+            </el-button>
+            <el-button size="small" @click="editChannel(row)">编辑</el-button>
+            <el-button type="danger" size="small" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -156,21 +144,106 @@
         <el-button type="primary" @click="handleEdit" :loading="editing">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 日志对话框 -->
+    <el-dialog v-model="showLogsDialog" title="录制日志" width="700px">
+      <div class="logs-container">
+        <div v-if="currentLogs.length === 0" class="no-logs">暂无日志</div>
+        <pre v-else class="logs-content"><code>{{ currentLogs.join('\n') }}</code></pre>
+      </div>
+      <template #footer>
+        <el-button @click="showLogsDialog = false">关闭</el-button>
+        <el-button @click="refreshLogs" :loading="logsLoading">刷新</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 下载监控对话框 -->
+    <el-dialog v-model="showDownloadsDialog" :title="'下载监控 - ' + currentDownloadUsername" width="800px">
+      <div class="download-monitor">
+        <el-alert
+          v-if="currentDownloads.length === 0"
+          title="当前没有活跃的下载任务"
+          type="info"
+          :closable="false"
+          show-icon
+        />
+        <el-table v-else :data="currentDownloads" style="width: 100%">
+          <el-table-column prop="type" label="类型" width="80">
+            <template #default="{ row }">
+              <el-tag :type="row.type === 'video' ? 'primary' : 'success'" size="small">
+                {{ row.type === 'video' ? '视频' : '音频' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="filename" label="文件名" min-width="150" show-overflow-tooltip />
+          <el-table-column prop="url" label="下载地址" min-width="300" show-overflow-tooltip>
+            <template #default="{ row }">
+              <a :href="row.url" target="_blank" class="download-link">{{ row.url }}</a>
+            </template>
+          </el-table-column>
+          <el-table-column prop="elapsedSeconds" label="已耗时" width="100">
+            <template #default="{ row }">
+              <span :class="{ 'download-stuck': row.elapsedSeconds > 30 }">
+                {{ formatDuration(row.elapsedSeconds) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="80">
+            <template #default="{ row }">
+              <el-tag v-if="row.elapsedSeconds > 30" type="danger" size="small">卡住?</el-tag>
+              <el-tag v-else type="success" size="small">下载中</el-tag>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+      <template #footer>
+        <el-button @click="showDownloadsDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useChannelStore } from '../stores/channel'
-import { channelApi, recordingApi } from '../api'
+import { channelApi } from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import dayjs from 'dayjs'
-import { Document, FolderOpened } from '@element-plus/icons-vue'
+import { Plus, Search } from '@element-plus/icons-vue'
 
 const store = useChannelStore()
 const loading = ref(false)
 const filter = ref('all')
 const searchText = ref('')
+
+// 下载信息（实时更新）
+const downloadInfo = ref({})
+const downloadInfoTimer = ref(null)
+
+// 日志相关
+const showLogsDialog = ref(false)
+const currentLogs = ref([])
+const logsLoading = ref(false)
+const currentLogUsername = ref('')
+
+// 下载监控相关
+const showDownloadsDialog = ref(false)
+const downloadsRefreshTimer = ref(null)
+const currentDownloadUsername = ref('')
+
+// 直接从 downloadInfo 获取当前活跃下载（响应式）
+const currentDownloads = computed(() => {
+  if (!currentDownloadUsername.value) return []
+  const info = downloadInfo.value[currentDownloadUsername.value]
+  return info?.activeDownloads || []
+})
+
+// 监听下载监控对话框关闭
+watch(showDownloadsDialog, (newVal) => {
+  if (!newVal) {
+    stopDownloadsRefresh()
+    currentDownloadUsername.value = ''
+  }
+})
 
 // 添加对话框
 const showAddDialog = ref(false)
@@ -215,26 +288,28 @@ const getAvatarColor = (username) => {
   return colors[Math.abs(hash) % colors.length]
 }
 
-const getStatusClass = (channel) => {
-  if (channel.recording) return 'status-recording'
-  if (channel.lastStatus === 'public') return 'status-online'
-  if (channel.lastStatus === 'private') return 'status-private'
+const getStatusClass = (status) => {
+  if (status === 'public') return 'status-online'
+  if (status === 'private') return 'status-private'
   return 'status-offline'
 }
 
-const getStatusText = (channel) => {
-  if (channel.recording) return '录制中'
-  if (channel.lastStatus === 'public') return '在线'
-  if (channel.lastStatus === 'private') return '私密'
+const getStatusText = (status) => {
+  if (status === 'public') return '在线'
+  if (status === 'private') return '私密'
   return '离线'
 }
 
-const getLastStatusType = (status) => {
-  const map = { public: 'success', private: 'warning', offline: 'info' }
-  return map[status] || 'info'
+const formatDuration = (seconds) => {
+  if (!seconds && seconds !== 0) return '-'
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const secs = seconds % 60
+  if (hours > 0) {
+    return `${hours}小时${minutes}分${secs}秒`
+  }
+  return `${minutes}分${secs}秒`
 }
-
-const formatDate = (date) => date ? dayjs(date).format('MM-DD HH:mm:ss') : '从未'
 
 const handleAdd = async () => {
   if (!newChannel.value.username.trim()) {
@@ -262,9 +337,12 @@ const editChannel = (channel) => {
 const handleEdit = async () => {
   editing.value = true
   try {
-    // TODO: 调用更新API
+    await channelApi.update(editForm.value.id, {
+      displayName: editForm.value.displayName
+    })
     ElMessage.success('保存成功')
     showEditDialog.value = false
+    await store.fetchChannels()
   } catch (e) {
     ElMessage.error('保存失败')
   } finally {
@@ -272,10 +350,10 @@ const handleEdit = async () => {
   }
 }
 
-const deleteChannel = async (channel) => {
+const handleDelete = async (channel) => {
   try {
     await ElMessageBox.confirm(
-      `确定删除直播间 "${channel.username}" 吗？`,
+      `确定删除直播间 "${channel.username}" 吗？${channel.recording ? '（当前正在录制，将先停止）' : ''}`,
       '确认删除',
       { type: 'warning' }
     )
@@ -299,145 +377,135 @@ const handleToggle = async (channel) => {
   }
 }
 
-const startRecording = async (channel) => {
+const handleStartRecording = async (channel) => {
   try {
-    await recordingApi.start(channel.username)
+    await store.startRecording(channel.username)
     ElMessage.success(`开始录制 ${channel.username}`)
-    channel.recording = true
-    // 启动状态轮询
-    startStatusPolling()
+    // 启动下载信息轮询
+    startDownloadInfoPolling()
   } catch (e) {
-    ElMessage.error(e || '开始录制失败')
+    ElMessage.error(e.response?.data?.message || '开始录制失败')
   }
 }
 
-const stopRecording = async (channel) => {
+const handleStopRecording = async (channel) => {
   try {
     await ElMessageBox.confirm(
-      `确定停止录制 "${channel.username}" 吗？`,
+      `确定停止录制 "${channel.username}" 吗？停止后会立即合并未合并的分片。`,
       '确认停止',
       { type: 'warning' }
     )
-    await recordingApi.stop(channel.username)
+    await store.stopRecording(channel.username)
     ElMessage.success(`停止录制 ${channel.username}`)
-    channel.recording = false
+    // 移除下载信息
+    delete downloadInfo.value[channel.username]
   } catch (e) {
-    if (e !== 'cancel') ElMessage.error(e || '停止录制失败')
+    if (e !== 'cancel') ElMessage.error(e.response?.data?.message || '停止录制失败')
   }
 }
 
-// 查看录制日志
-const viewLogs = async (channel) => {
+const handleViewLogs = async (channel) => {
+  currentLogUsername.value = channel.username
+  showLogsDialog.value = true
+  await refreshLogs()
+}
+
+const refreshLogs = async () => {
+  if (!currentLogUsername.value) return
+  logsLoading.value = true
   try {
-    const res = await recordingApi.getLogs(channel.username)
-    // 显示日志对话框
-    ElMessageBox.alert(
-      `<div style="max-height: 400px; overflow-y: auto;"><pre>${res.logs || '暂无日志'}</pre></div>`,
-      `录制日志 - ${channel.username}`,
-      {
-        dangerouslyUseHTMLString: true,
-        confirmButtonText: '关闭',
-        customClass: 'log-dialog'
-      }
-    )
+    const res = await channelApi.getLogs(currentLogUsername.value)
+    currentLogs.value = res.logs || []
   } catch (e) {
-    ElMessage.error('获取日志失败: ' + (e || '未知错误'))
+    ElMessage.error('获取日志失败')
+  } finally {
+    logsLoading.value = false
   }
 }
 
-// 查看录制文件
-const viewRecordings = async (channel) => {
-  try {
-    const res = await recordingApi.getByChannel(channel.id)
-    if (!res || res.length === 0) {
-      ElMessage.info('该频道暂无录制文件')
-      return
+const handleViewDownloads = (channel) => {
+  currentDownloadUsername.value = channel.username
+  showDownloadsDialog.value = true
+  // 立即刷新一次
+  fetchDownloadInfo()
+  // 启动实时刷新
+  startDownloadsRefresh()
+}
+
+const startDownloadsRefresh = () => {
+  if (downloadsRefreshTimer.value) return
+  downloadsRefreshTimer.value = setInterval(() => {
+    if (showDownloadsDialog.value) {
+      fetchDownloadInfo()
+    } else {
+      // 对话框已关闭，停止刷新
+      clearInterval(downloadsRefreshTimer.value)
+      downloadsRefreshTimer.value = null
     }
-    
-    // 显示文件列表对话框
-    const fileList = res.map(r => 
-      `<div style="margin: 8px 0; padding: 8px; background: #f5f5f5; border-radius: 4px;">
-        <div><strong>文件:</strong> ${r.filePath || '未知'}</div>
-        <div><strong>大小:</strong> ${formatFileSize(r.fileSize)}</div>
-        <div><strong>时长:</strong> ${formatDuration(r.durationSeconds)}</div>
-        <div><strong>时间:</strong> ${formatDate(r.startTime)}</div>
-      </div>`
-    ).join('')
-    
-    ElMessageBox.alert(
-      `<div style="max-height: 500px; overflow-y: auto;">${fileList}</div>`,
-      `录制文件 - ${channel.username}`,
-      {
-        dangerouslyUseHTMLString: true,
-        confirmButtonText: '关闭',
-        customClass: 'file-dialog'
-      }
-    )
-  } catch (e) {
-    ElMessage.error('获取录制文件失败: ' + (e || '未知错误'))
+  }, 1500)
+}
+
+const stopDownloadsRefresh = () => {
+  if (downloadsRefreshTimer.value) {
+    clearInterval(downloadsRefreshTimer.value)
+    downloadsRefreshTimer.value = null
   }
 }
 
-// 格式化文件大小
-const formatFileSize = (bytes) => {
-  if (!bytes) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB']
-  let size = bytes
-  let unitIndex = 0
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024
-    unitIndex++
+// 获取所有正在录制的频道的下载信息
+const fetchDownloadInfo = async () => {
+  const recordingChannels = store.channels.filter(c => c.recording)
+  if (recordingChannels.length === 0) {
+    // 没有正在录制的频道，停止轮询
+    if (downloadInfoTimer.value) {
+      clearInterval(downloadInfoTimer.value)
+      downloadInfoTimer.value = null
+    }
+    return
   }
-  return `${size.toFixed(2)} ${units[unitIndex]}`
-}
 
-// 格式化时长
-const formatDuration = (seconds) => {
-  if (!seconds) return '0秒'
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  const secs = seconds % 60
-  if (hours > 0) {
-    return `${hours}小时${minutes}分钟${secs}秒`
-  } else if (minutes > 0) {
-    return `${minutes}分钟${secs}秒`
-  } else {
-    return `${secs}秒`
-  }
-}
-const startStatusPolling = () => {
-  if (statusTimer) return
-  statusTimer = setInterval(async () => {
+  for (const channel of recordingChannels) {
     try {
-      const res = await recordingApi.getActive()
-      // 更新录制状态
-      store.channels.forEach(channel => {
-        const recording = res.find(r => r.username === channel.username)
-        channel.recording = !!recording
-      })
+      const res = await channelApi.getDownloadInfo(channel.username)
+      downloadInfo.value[channel.username] = res
     } catch (e) {
-      console.error('状态轮询失败:', e)
+      console.error(`获取 ${channel.username} 下载信息失败:`, e)
     }
-  }, 5000) // 每5秒轮询一次
-}
-
-const stopStatusPolling = () => {
-  if (statusTimer) {
-    clearInterval(statusTimer)
-    statusTimer = null
   }
 }
 
-// 状态轮询
-let statusTimer = null
+const startDownloadInfoPolling = () => {
+  // 如果已经在轮询，不再启动
+  if (downloadInfoTimer.value) return
+  // 立即获取一次
+  fetchDownloadInfo()
+  // 每2秒轮询一次
+  downloadInfoTimer.value = setInterval(fetchDownloadInfo, 2000)
+}
+
+const stopDownloadInfoPolling = () => {
+  if (downloadInfoTimer.value) {
+    clearInterval(downloadInfoTimer.value)
+    downloadInfoTimer.value = null
+  }
+}
 
 // 生命周期
-onMounted(() => {
-  startStatusPolling()
+onMounted(async () => {
+  loading.value = true
+  try {
+    await store.fetchChannels()
+    // 检查是否有正在录制的频道，启动下载信息轮询
+    if (store.channels.some(c => c.recording)) {
+      startDownloadInfoPolling()
+    }
+  } finally {
+    loading.value = false
+  }
 })
 
 onUnmounted(() => {
-  stopStatusPolling()
+  stopDownloadInfoPolling()
 })
 </script>
 
@@ -470,7 +538,6 @@ onUnmounted(() => {
   font-weight: bold;
 }
 
-/* 新增：用户名链接样式 */
 .username-link {
   color: #409EFF;
   text-decoration: none;
@@ -488,35 +555,67 @@ onUnmounted(() => {
   color: #909399;
 }
 
-.status-cell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.status-badge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
 }
 
-.status-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
+.status-online {
+  background: #f0f9eb;
+  color: #67C23A;
 }
 
-.status-online { background: #67C23A; }
-.status-recording { background: #F56C6C; animation: pulse 1.5s infinite; }
-.status-private { background: #E6A23C; }
-.status-offline { background: #909399; }
+.status-private {
+  background: #fdf6ec;
+  color: #E6A23C;
+}
 
-.recording-icon {
+.status-offline {
+  background: #f4f4f5;
+  color: #909399;
+}
+
+.logs-container {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.logs-content {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 450px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.no-logs {
+  text-align: center;
+  color: #909399;
+  padding: 40px;
+}
+
+.download-monitor {
+  max-height: 500px;
+}
+
+.download-link {
+  color: #409EFF;
+  text-decoration: none;
+  font-size: 12px;
+}
+
+.download-link:hover {
+  text-decoration: underline;
+}
+
+.download-stuck {
   color: #F56C6C;
-  animation: blink 1s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
+  font-weight: bold;
 }
 </style>

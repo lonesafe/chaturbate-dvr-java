@@ -37,27 +37,11 @@ export const channelApi = {
   add: (data) => api.post('/channels', data),
   update: (id, data) => api.put(`/channels/${id}`, data),
   delete: (id) => api.delete(`/channels/${id}`),
-  toggle: (id) => api.put(`/channels/${id}/toggle`)
-}
-
-// 录制API
-export const recordingApi = {
-  // 获取所有录制记录
-  getAll: () => api.get('/recordings'),
-  // 获取指定频道的录制记录
-  getByChannel: (channelId) => api.get(`/recordings/channel/${channelId}`),
-  // 获取正在进行的录制
-  getActive: () => api.get('/recordings/active'),
-  // 获取单个录制详情
-  getById: (id) => api.get(`/recordings/${id}`),
-  // 删除录制记录
-  delete: (id) => api.delete(`/recordings/${id}`),
-  // 开始录制
-  start: (username) => api.post(`/recordings/start?username=${username}`),
-  // 停止录制
-  stop: (username) => api.post(`/recordings/stop?username=${username}`),
-  // 获取录制日志
-  getLogs: (username) => api.get(`/recordings/logs/${username}`)
+  toggle: (id) => api.put(`/channels/${id}/toggle`),
+  startRecording: (username) => api.post(`/channels/${username}/start`),
+  stopRecording: (username) => api.post(`/channels/${username}/stop`),
+  getDownloadInfo: (username) => api.get(`/channels/${username}/download-info`),
+  getLogs: (username) => api.get(`/channels/${username}/logs`)
 }
 
 // 配置API

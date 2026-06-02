@@ -1,11 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { channelApi, recordingApi } from '../api'
+import { channelApi } from '../api'
 
 export const useChannelStore = defineStore('channel', () => {
   // State
   const channels = ref([])
-  const recordings = ref([])
   const loading = ref(false)
 
   // Getters
@@ -31,15 +30,6 @@ export const useChannelStore = defineStore('channel', () => {
     }
   }
 
-  const fetchRecordings = async () => {
-    try {
-      const data = await recordingApi.getAll()
-      recordings.value = data
-    } catch (e) {
-      console.error('获取录制记录失败:', e)
-    }
-  }
-
   const addChannel = async (channelData) => {
     await channelApi.add(channelData)
     await fetchChannels()
@@ -55,18 +45,28 @@ export const useChannelStore = defineStore('channel', () => {
     await fetchChannels()
   }
 
+  const startRecording = async (username) => {
+    await channelApi.startRecording(username)
+    await fetchChannels()
+  }
+
+  const stopRecording = async (username) => {
+    await channelApi.stopRecording(username)
+    await fetchChannels()
+  }
+
   return {
     channels,
-    recordings,
     loading,
     enabledChannels,
     recordingChannels,
     onlineChannels,
     stats,
     fetchChannels,
-    fetchRecordings,
     addChannel,
     deleteChannel,
-    toggleChannel
+    toggleChannel,
+    startRecording,
+    stopRecording
   }
 })

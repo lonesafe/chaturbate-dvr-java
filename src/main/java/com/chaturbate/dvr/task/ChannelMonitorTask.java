@@ -2,9 +2,7 @@ package com.chaturbate.dvr.task;
 
 import com.chaturbate.dvr.dto.ChatVideoContext;
 import com.chaturbate.dvr.entity.Channel;
-import com.chaturbate.dvr.entity.Recording;
 import com.chaturbate.dvr.mapper.ChannelMapper;
-import com.chaturbate.dvr.mapper.RecordingMapper;
 import com.chaturbate.dvr.service.ChaturbateApiService;
 import com.chaturbate.dvr.service.HlsRecorder;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +26,6 @@ public class ChannelMonitorTask {
     private final ChaturbateApiService apiService;
     private final HlsRecorder hlsRecorder;
     private final ChannelMapper channelMapper;
-    private final RecordingMapper recordingMapper;
 
     @Value("${dvr.preferred-quality:720p}")
     private String preferredQuality;
@@ -102,16 +99,6 @@ public class ChannelMonitorTask {
         channel.setRecording(true);
         channelMapper.updateRecordingStatus(channel.getId(), true, "public");
 
-        // 创建录制记录
-        Recording recording = new Recording();
-        recording.setChannelId(channel.getId());
-        recording.setChannelUsername(username);
-        recording.setStartTime(LocalDateTime.now());
-        recording.setFileFormat("ts");
-        recording.setQuality(preferredQuality);
-        recording.setStatus("recording");
-        recordingMapper.insert(recording);
-
         // 开始录制
         String taskId = hlsRecorder.startRecording(username, hlsSource);
 
@@ -124,30 +111,12 @@ public class ChannelMonitorTask {
     private void stopRecording(Channel channel) {
         String username = channel.getUsername();
 
-        // 停止录制器
+        // 停止录制器（会立即合并未合并的分片）
         hlsRecorder.stopRecording(username);
 
         // 更新频道状态
         channel.setRecording(false);
         channelMapper.updateRecordingStatus(channel.getId(), false, channel.getLastStatus());
-
-        // 更新录制记录
-        List<Recording> recordings = recordingMapper.selectRecording();
-        for (Recording recording : recordings) {
-            if (recording.getChannelId().equals(channel.getId())) {
-                recording.setEndTime(LocalDateTime.now());
-                recording.setStatus("completed");
-                // TODO: 计算实际时长和文件大小
-                recordingMapper.updateComplete(
-                    recording.getId(),
-                    recording.getEndTime(),
-                    0, // duration
-                    0L, // fileSize
-                    "completed"
-                );
-                break;
-            }
-        }
 
         log.info("直播间 [{}] 停止录制", username);
     }

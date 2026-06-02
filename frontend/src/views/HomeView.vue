@@ -2,7 +2,7 @@
   <div class="home">
     <!-- 统计卡片 -->
     <el-row :gutter="20" class="stats-row">
-      <el-col :span="4" v-for="stat in statCards" :key="stat.key">
+      <el-col :span="6" v-for="stat in statCards" :key="stat.key">
         <el-card class="stat-card" :body-style="{ padding: '20px' }">
           <div class="stat-icon" :style="{ background: stat.color }">
             <el-icon size="24" color="#fff"><component :is="stat.icon" /></el-icon>
@@ -73,60 +73,11 @@
                   <span class="recording-time">{{ formatTime(channel.lastCheckTime) }}</span>
                 </div>
               </div>
-              <div class="recording-action">
-                <el-button type="danger" size="small" @click="stopRecording(channel)">
-                  停止
-                </el-button>
-              </div>
             </div>
           </div>
         </el-card>
       </el-col>
     </el-row>
-
-    <!-- 最近录制记录 -->
-    <el-card class="recent-recordings">
-      <template #header>
-        <div class="card-header">
-          <span>🎬 最近录制记录</span>
-          <el-button text @click="$router.push('/recordings')">查看全部</el-button>
-        </div>
-      </template>
-      <el-table :data="recentRecordings" style="width: 100%">
-        <el-table-column prop="channelUsername" label="主播" width="150">
-          <template #default="{ row }">
-            <strong>{{ row.channelUsername }}</strong>
-          </template>
-        </el-table-column>
-        <el-table-column label="开始时间" width="180">
-          <template #default="{ row }">
-            {{ formatDate(row.startTime) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="时长" width="100">
-          <template #default="{ row }">
-            {{ formatDuration(row.durationSeconds) }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="quality" label="质量" width="80">
-          <template #default="{ row }">
-            <el-tag size="small">{{ row.quality }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="status" label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="getStatusType(row.status)" size="small">
-              {{ getStatusText(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="文件大小" width="120">
-          <template #default="{ row }">
-            {{ formatFileSize(row.fileSize) }}
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
   </div>
 </template>
 
@@ -146,8 +97,7 @@ const statCards = computed(() => [
   { key: 'total', label: '总直播间', value: store.stats.total, icon: 'Monitor', color: '#409EFF' },
   { key: 'online', label: '在线直播', value: store.stats.online, icon: 'VideoPlay', color: '#67C23A' },
   { key: 'recording', label: '录制中', value: store.stats.recording, icon: 'VideoCamera', color: '#F56C6C' },
-  { key: 'offline', label: '离线', value: store.stats.offline, icon: 'CircleClose', color: '#909399' },
-  { key: 'private', label: '私密中', value: store.stats.private, icon: 'Lock', color: '#E6A23C' }
+  { key: 'offline', label: '离线', value: store.stats.offline, icon: 'CircleClose', color: '#909399' }
 ])
 
 const statusData = computed(() => {
@@ -161,39 +111,8 @@ const statusData = computed(() => {
 })
 
 const recordingChannels = computed(() => store.recordingChannels)
-const recentRecordings = computed(() => store.recordings.slice(0, 10))
 
-const formatDate = (date) => date ? dayjs(date).format('MM-DD HH:mm:ss') : '-'
 const formatTime = (date) => date ? dayjs(date).fromNow() : '-'
-const formatDuration = (seconds) => {
-  if (!seconds) return '-'
-  const mins = Math.floor(seconds / 60)
-  const secs = seconds % 60
-  return `${mins}分${secs}秒`
-}
-const formatFileSize = (bytes) => {
-  if (!bytes) return '-'
-  const units = ['B', 'KB', 'MB', 'GB']
-  let size = bytes
-  let i = 0
-  while (size >= 1024 && i < units.length - 1) {
-    size /= 1024
-    i++
-  }
-  return `${size.toFixed(2)} ${units[i]}`
-}
-const getStatusType = (status) => {
-  const map = { recording: 'danger', completed: 'success', failed: 'warning' }
-  return map[status] || 'info'
-}
-const getStatusText = (status) => {
-  const map = { recording: '录制中', completed: '已完成', failed: '失败' }
-  return map[status] || status
-}
-const stopRecording = (channel) => {
-  // TODO: 调用停止录制API
-  console.log('停止录制:', channel.username)
-}
 </script>
 
 <style scoped>
@@ -310,9 +229,5 @@ const stopRecording = (channel) => {
   padding: 40px 0;
   text-align: center;
   color: #909399;
-}
-
-.recent-recordings {
-  margin-top: 20px;
 }
 </style>
