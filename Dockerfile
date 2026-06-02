@@ -5,7 +5,7 @@ FROM node:22-alpine AS frontend-builder
 
 WORKDIR /build/frontend
 COPY frontend/package*.json ./
-RUN npm ci --prefer-offline
+RUN npm i
 
 COPY frontend/ ./
 RUN npm run build
@@ -36,7 +36,6 @@ COPY pom.xml ./
 RUN mvn dependency:go-offline -B -q
 
 COPY src ./src
-COPY src/main/resources/static/ /build/src/main/resources/static/
 RUN mvn package -DskipTests -q
 
 # ============================================================
