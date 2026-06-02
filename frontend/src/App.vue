@@ -64,6 +64,7 @@ const refreshAll = async () => {
   refreshing.value = true
   try {
     await channelStore.fetchChannels()
+    await channelStore.fetchRecordingChannels()
     ElMessage.success('刷新成功')
   } catch (e) {
     ElMessage.error('刷新失败')
@@ -76,6 +77,7 @@ onMounted(() => {
   refreshAll()
   refreshTimer = setInterval(() => {
     channelStore.fetchChannels()
+    channelStore.fetchRecordingChannels()
   }, 30000)
 })
 

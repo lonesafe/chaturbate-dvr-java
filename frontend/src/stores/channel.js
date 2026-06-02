@@ -6,14 +6,15 @@ export const useChannelStore = defineStore('channel', () => {
   // State
   const channels = ref([])
   const loading = ref(false)
+  const recordingChannels = ref([])
 
   // Getters
   const enabledChannels = computed(() => channels.value.filter(c => c.enabled))
-  
+
   const stats = computed(() => ({
     total: channels.value.length,
     online: 0,  // 从 ChannelsView.vue 的 channelStatuses 获取
-    recording: 0,  // 从 ChannelsView.vue 的 recordingUsernames 获取
+    recording: recordingChannels.value.length,
     offline: 0,
     private: 0
   }))
@@ -25,6 +26,15 @@ export const useChannelStore = defineStore('channel', () => {
       channels.value = data
     } catch (e) {
       console.error('获取直播间失败:', e)
+    }
+  }
+
+  const fetchRecordingChannels = async () => {
+    try {
+      const data = await channelApi.getRecording()
+      recordingChannels.value = data
+    } catch (e) {
+      console.error('获取录制中直播间失败:', e)
     }
   }
 
@@ -56,9 +66,11 @@ export const useChannelStore = defineStore('channel', () => {
   return {
     channels,
     loading,
+    recordingChannels,
     enabledChannels,
     stats,
     fetchChannels,
+    fetchRecordingChannels,
     addChannel,
     deleteChannel,
     toggleChannel,
