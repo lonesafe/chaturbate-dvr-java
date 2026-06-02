@@ -101,6 +101,100 @@ public class ChannelController {
     }
 
     /**
+     * 批量添加直播间
+     * @param request 包含 "usernames" 字段，支持：
+     *                 1. JSON数组：["user1", "user2"]
+     *                 2. 逗号分隔字符串："user1,user2,user3"
+     *                 3. 换行分隔字符串："user1\nuser2\nuser3"
+     */
+    @PostMapping("/batch")
+    public ResponseEntity<?> batchAddChannels(@RequestBody Map<String, Object> request) {
+        List<String> usernames = new ArrayList<>();
+
+        Object usernamesObj = request.get("usernames");
+        if (usernamesObj == null) {
+            return ResponseEntity.badRequest().body("usernames 不能为空");
+        }
+
+        if (usernamesObj instanceof List) {
+            // JSON 数组
+            @SuppressWarnings("unchecked")
+            List<String> list = (List<String>) usernamesObj;
+            usernames.addAll(list);
+        } else if (usernamesObj instanceof String) {
+            String str = (String) usernamesObj;
+            // 优先按换行分割，其次按逗号分割
+            if (str.contains("\n")) {
+                String[] parts = str.split("[\\n\\r]+");
+                for (String p : parts) {
+                    String trimmed = p.trim();
+                    if (!trimmed.isEmpty()) {
+                        usernames.add(trimmed);
+                    }
+                }
+            } else {
+                String[] parts = str.split(",");
+                for (String p : parts) {
+                    String trimmed = p.trim();
+                    if (!trimmed.isEmpty()) {
+                        usernames.add(trimmed);
+                    }
+                }
+            }
+        }
+
+        if (usernames.isEmpty()) {
+            return ResponseEntity.badRequest().body("usernames 不能为空");
+        }
+
+        List<Map<String, Object>> successList = new ArrayList<>();
+        List<String> skipList = new ArrayList<>();
+        List<String> failList = new ArrayList<>();
+
+        for (String username : usernames) {
+            String u = username.trim();
+            if (u.isEmpty()) continue;
+
+            Channel existing = channelMapper.selectByUsername(u);
+            if (existing != null) {
+                skipList.add(u);
+                continue;
+            }
+
+            try {
+                Channel channel = new Channel();
+                channel.setUsername(u);
+                channel.setDisplayName(u);
+                channel.setEnabled(true);
+                channelMapper.insert(channel);
+
+                Map<String, Object> item = new HashMap<>();
+                item.put("username", u);
+                item.put("displayName", u);
+                successList.add(item);
+            } catch (Exception e) {
+                failList.add(u + " (" + e.getMessage() + ")");
+            }
+        }
+
+        // 统一刷新一次内存列表
+        if (!successList.isEmpty()) {
+            channelMonitorTask.refreshEnabledChannels();
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("total", usernames.size());
+        result.put("added", successList.size());
+        result.put("skipped", skipList.size());
+        result.put("failed", failList.size());
+        result.put("addedList", successList);
+        result.put("skippedList", skipList);
+        result.put("failedList", failList);
+        return ResponseEntity.ok(result);
+    }
+
+    /**
      * 更新直播间
      */
     @PutMapping("/{id}")

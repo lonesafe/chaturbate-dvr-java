@@ -7,6 +7,9 @@
           <el-button type="primary" @click="showAddDialog = true">
             <el-icon><Plus /></el-icon> 添加直播间
           </el-button>
+          <el-button @click="showBatchDialog = true">
+            <el-icon><Plus /></el-icon> 批量添加
+          </el-button>
         </div>
       </template>
 
@@ -126,6 +129,27 @@
       <template #footer>
         <el-button @click="showAddDialog = false">取消</el-button>
         <el-button type="primary" @click="handleAdd" :loading="adding">添加</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 批量添加直播间对话框 -->
+    <el-dialog v-model="showBatchDialog" title="批量添加直播间" width="500px">
+      <el-form label-width="80px">
+        <el-form-item label="用户名列表" required>
+          <el-input
+            v-model="batchInput"
+            type="textarea"
+            :rows="10"
+            placeholder="输入用户名，每行一个或用逗号分隔&#10;例如：&#10;user1&#10;user2&#10;user3"
+          />
+        </el-form-item>
+        <el-form-item>
+          <span style="color: #909399; font-size: 12px;">已存在的用户名会自动跳过</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showBatchDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleBatchAdd" :loading="batchAdding">添加</el-button>
       </template>
     </el-dialog>
 
@@ -256,8 +280,13 @@ watch(showDownloadsDialog, (newVal) => {
 
 // 添加对话框
 const showAddDialog = ref(false)
-const adding = ref(false)
 const newChannel = ref({ username: '', displayName: '' })
+
+// 批量添加对话框
+const showBatchDialog = ref(false)
+const batchInput = ref('')
+const batchAdding = ref(false)
+const adding = ref(false)
 
 // 编辑对话框
 const showEditDialog = ref(false)
@@ -335,6 +364,29 @@ const handleAdd = async () => {
     ElMessage.error(e.response?.data || '添加失败')
   } finally {
     adding.value = false
+  }
+}
+
+const handleBatchAdd = async () => {
+  if (!batchInput.value.trim()) {
+    ElMessage.warning('请输入用户名')
+    return
+  }
+  batchAdding.value = true
+  try {
+    const res = await channelApi.batchAdd(batchInput.value)
+    showBatchDialog.value = false
+    batchInput.value = ''
+    await store.fetchChannels()
+    if (res.skipped > 0 || res.failed > 0) {
+      ElMessage.warning(`添加完成：新增 ${res.added} 个，跳过 ${res.skipped} 个（已存在），失败 ${res.failed} 个`)
+    } else {
+      ElMessage.success(`成功添加 ${res.added} 个直播间`)
+    }
+  } catch (e) {
+    ElMessage.error(e || '批量添加失败')
+  } finally {
+    batchAdding.value = false
   }
 }
 
