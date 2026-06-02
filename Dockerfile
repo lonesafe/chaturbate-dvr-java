@@ -16,6 +16,22 @@ RUN npm run build
 FROM maven:3.9-eclipse-temurin-21 AS backend-builder
 
 WORKDIR /build
+
+# 配置阿里云 Maven 镜像（解决国内网络访问 Maven Central 受限问题）
+RUN printf '<?xml version="1.0" encoding="UTF-8"?>\n\
+<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"\n\
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"\n\
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 http://maven.apache.org/xsd/settings-1.2.0.xsd">\n\
+  <mirrors>\n\
+    <mirror>\n\
+      <id>aliyun</id>\n\
+      <mirrorOf>central</mirrorOf>\n\
+      <name>Aliyun Maven</name>\n\
+      <url>https://maven.aliyun.com/repository/public</url>\n\
+    </mirror>\n\
+  </mirrors>\n\
+</settings>\n' > /usr/share/maven/conf/settings.xml
+
 COPY pom.xml ./
 RUN mvn dependency:go-offline -B -q
 
