@@ -100,7 +100,7 @@ public class ChannelMonitorTask {
 
         if (isPublic && !isRecording) {
             // 开始录制
-            startRecording(channel, context);
+            startRecording(channel);
         } else if (!isPublic && isRecording) {
             // 停止录制
             stopRecording(channel);
@@ -110,14 +110,9 @@ public class ChannelMonitorTask {
     /**
      * 开始录制
      */
-    private void startRecording(Channel channel, ChatVideoContext context) {
+    private void startRecording(Channel channel) {
         String username = channel.getUsername();
-        String hlsSource = context.getHlsSource();
-
-        if (hlsSource == null || hlsSource.isEmpty()) {
-            log.error("直播间 [{}] 没有HLS源地址", username);
-            return;
-        }
+        String hlsSource = apiService.getHlsSource(username);
 
         // 开始录制（HlsRecorder 会自动维护录制中的列表）
         String taskId = hlsRecorder.startRecording(username, hlsSource);

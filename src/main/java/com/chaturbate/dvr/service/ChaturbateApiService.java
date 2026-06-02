@@ -93,17 +93,6 @@ public class ChaturbateApiService {
     }
 
     /**
-     * 检查直播间是否正在公开直播
-     *
-     * @param username 主播用户名
-     * @return true=正在公开直播
-     */
-    public boolean isPublicLive(String username) {
-        ChatVideoContext context = getChatVideoContext(username);
-        return context != null && context.isPublicLive();
-    }
-
-    /**
      * 获取直播 HLS 地址
      *
      * @param username 主播用户名

@@ -1,6 +1,9 @@
 package com.chaturbate.dvr.service;
 
+import com.chaturbate.dvr.dto.ChatVideoContext;
 import com.chaturbate.dvr.utils.HlsParser;
+import lombok.Data;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -41,17 +44,17 @@ public class HlsRecorder {
     /**
      * URL 过期异常（403 时抛出）
      */
+    @Getter
     public static class UrlExpiredException extends RuntimeException {
         private final String url;
-        
-        public UrlExpiredException(String message, String url) {
+        private final int errorCode;
+
+        public UrlExpiredException(String message, String url, int errorCode) {
             super(message);
             this.url = url;
+            this.errorCode = errorCode;
         }
-        
-        public String getUrl() {
-            return url;
-        }
+
     }
 
     // 配置项（从数据库加载，带默认值）
@@ -62,9 +65,9 @@ public class HlsRecorder {
     /**
      * 解析录制路径中的占位符
      * 支持：
-     *   {username}     - 主播用户名
-     *   {yyyy-mm-dd}   - 当前日期
-     *   {HH-MM-ss}     - 当前时间
+     * {username}     - 主播用户名
+     * {yyyy-mm-dd}   - 当前日期
+     * {HH-MM-ss}     - 当前时间
      * 示例：./recordings/{username}/{yyyy-mm-dd} -> ./recordings/streamer_name/2026-06-02
      */
     private String resolveRecordPath(String pathTemplate, String username) {
@@ -90,10 +93,6 @@ public class HlsRecorder {
 
     private String getFfmpegPath() {
         return configService.getConfigValue("ffmpeg_path", "ffmpeg");
-    }
-
-    private int getDownloadThreads() {
-        return configService.getConfigValueAsInt("download_threads", 4);
     }
 
     private final ExecutorService executor = Executors.newCachedThreadPool();
@@ -135,6 +134,8 @@ public class HlsRecorder {
         RecordingTask task = activeRecordings.get(username);
         if (task != null) {
             task.stop();
+            // 立即从 activeRecordings 移除，避免录制线程还未退出时列表仍显示
+            activeRecordings.remove(username);
             log.info("停止录制直播间 [{}]", username);
         }
     }
@@ -177,7 +178,7 @@ public class HlsRecorder {
         info.put("partCount", task.getPartCount());
         info.put("format", task.getFormat());
         info.put("isStopped", task.isStopped());
-        
+
         // 添加活跃下载列表
         List<Map<String, Object>> activeList = new ArrayList<>();
         for (ActiveDownload download : task.getActiveDownloads()) {
@@ -191,7 +192,7 @@ public class HlsRecorder {
         }
         info.put("activeDownloads", activeList);
         info.put("activeDownloadCount", task.getActiveDownloadCount());
-        
+
         return info;
     }
 
@@ -200,25 +201,20 @@ public class HlsRecorder {
      * 当遇到 403 时自动刷新 m3u8 地址并重试
      */
     private void doRecording(RecordingTask task) throws Exception {
-        final int MAX_REFRESH_RETRIES = 3;
-        int refreshCount = 0;
-        
         // 当前使用的 chunklist URLs
         String[] currentVideoUrl = {null};
         String[] currentAudioUrl = {null};
-        
-        while (refreshCount <= MAX_REFRESH_RETRIES) {
+
+        while (true) {
             try {
                 // 1. 首次解析 master.m3u8，后续通过 refreshChunklistUrls 刷新
-                if (currentVideoUrl[0] == null) {
-                    HlsParser.MasterPlaylistInfo playlistInfo = selectStreams(task.getMasterM3u8Url(), getPreferredQuality());
-                    if (playlistInfo == null) {
-                        throw new RuntimeException("无法解析 master.m3u8");
-                    }
-                    currentVideoUrl[0] = playlistInfo.getSelectedVideoChunklist();
-                    currentAudioUrl[0] = playlistInfo.getSelectedAudioChunklist();
-                    task.setFormat(playlistInfo.getFormat());
+                HlsParser.MasterPlaylistInfo playlistInfo = selectStreams(task.getMasterM3u8Url(), getPreferredQuality());
+                if (playlistInfo.getFormat()== null) {
+                    throw new RuntimeException("无法解析 master.m3u8");
                 }
+                currentVideoUrl[0] = playlistInfo.getSelectedVideoChunklist();
+                currentAudioUrl[0] = playlistInfo.getSelectedAudioChunklist();
+                task.setFormat(playlistInfo.getFormat());
 
                 task.setChunklistUrl(currentVideoUrl[0]);
                 log.info("录制视频流: {}", currentVideoUrl[0]);
@@ -247,45 +243,42 @@ public class HlsRecorder {
                 if ("ts".equals(task.getFormat())) {
                     downloadAndMergeLoopTs(task, currentVideoUrl[0], currentAudioUrl[0], tmpDir, videoFiles, audioFiles);
                 } else {
-                    downloadAndMergeLoop(task, currentVideoUrl[0], currentAudioUrl[0], tmpDir, videoFiles, audioFiles);
+                    downloadAndMergeLoopM4s(task, currentVideoUrl[0], currentAudioUrl[0], tmpDir, videoFiles, audioFiles);
                 }
 
                 // 5. 录制结束后，合并所有 part 文件（仅 fMP4 需要，TS 已在循环中合并）
                 if ("fmp4".equals(task.getFormat()) && task.getPartCount() > 0) {
                     mergeAllParts(task);
-                    log.info("录制 [{}] 完成, 文件: {}, 大小: {} bytes", 
-                        task.getUsername(), task.getFinalOutputFile(), 
-                        Files.exists(task.getFinalOutputFile()) ? Files.size(task.getFinalOutputFile()) : 0);
+                    log.info("录制 [{}] 完成, 文件: {}, 大小: {} bytes",
+                            task.getUsername(), task.getFinalOutputFile(),
+                            Files.exists(task.getFinalOutputFile()) ? Files.size(task.getFinalOutputFile()) : 0);
                 } else if ("ts".equals(task.getFormat())) {
                     log.info("录制 [{}] 完成 (TS 格式实时合并)", task.getUsername());
                 } else {
                     log.warn("录制 [{}] 完成, 但没有生成任何文件", task.getUsername());
                 }
-                
                 // 正常结束
                 break;
-                
             } catch (UrlExpiredException e) {
-                refreshCount++;
-                if (refreshCount > MAX_REFRESH_RETRIES) {
-                    log.error("m3u8 地址刷新次数超过上限 ({})，停止录制", MAX_REFRESH_RETRIES);
-                    throw e;
-                }
-                
-                log.warn("检测到 URL 过期 (403)，准备刷新... (第 {} 次)", refreshCount);
-                
-                // 刷新 chunklist URLs
-                HlsParser.MasterPlaylistInfo newPlaylist = refreshChunklistUrls(task);
-                if (newPlaylist == null) {
-                    log.error("刷新失败，1 秒后重试...");
-                    Thread.sleep(1000);
-                    continue;
-                }
-                
-                currentVideoUrl[0] = newPlaylist.getSelectedVideoChunklist();
-                currentAudioUrl[0] = newPlaylist.getSelectedAudioChunklist();
-                
-                // 继续循环，使用新 URL 重试
+                    // 获取最新的master.m3u8地址
+                    log.warn("检测到 URL 过期 (403)，准备刷新... ");
+                    ChatVideoContext context =  apiService.getChatVideoContext(task.getUsername());
+                    if (context != null && context.isPublicLive()) {
+                        task.setMasterM3u8Url(apiService.getHlsSource(task.getUsername()));
+                        // 重置 chunkList URLs，强制 selectStreams 重新解析
+                        currentVideoUrl[0] = null;
+                        currentAudioUrl[0] = null;
+                        log.warn("检测到 URL 过期 (403)，已刷新最新url:{}, 继续录制", task.getMasterM3u8Url());
+                        continue;
+                    } else {
+                        if (context == null) {
+                            log.error("获取直播间信息失败");
+                            throw new RuntimeException("获取直播间信息失败");
+                        } else {
+                            log.error("直播间已结束");
+                            throw new RuntimeException("直播间已结束");
+                        }
+                    }
             }
         }
     }
@@ -309,7 +302,7 @@ public class HlsRecorder {
         videoStreams.sort((a, b) -> Integer.compare(b.getResolutionHeight(), a.getResolutionHeight()));
 
         // 匹配：优先选择 >= 目标分辨率的流
-        HlsParser.StreamInfo selectedVideo = videoStreams.get(0); // 默认最高分辨率
+        HlsParser.StreamInfo selectedVideo = videoStreams.getFirst(); // 默认最高分辨率
         for (HlsParser.StreamInfo stream : videoStreams) {
             if (stream.getResolutionHeight() >= targetHeight) {
                 selectedVideo = stream;
@@ -319,13 +312,13 @@ public class HlsRecorder {
 
         log.info("选择分辨率: {} (带宽: {})", selectedVideo.getResolution(), selectedVideo.getBandwidth());
 
-        // 转换视频 chunklist 为绝对 URL
-        String videoChunklistUrl = toAbsoluteUrl(masterUrl, selectedVideo.getChunklistUrl());
-        log.info("视频 chunklist: {} -> {}", selectedVideo.getChunklistUrl(), videoChunklistUrl);
+        // 转换视频 chunkList 为绝对 URL
+        String videoChunkListUrl = toAbsoluteUrl(masterUrl, selectedVideo.getChunklistUrl());
+        log.info("视频 chunklist: {} -> {}", selectedVideo.getChunklistUrl(), videoChunkListUrl);
 
         // 检测格式（fMP4 或 TS）
-        String testChunklist = httpGet(videoChunklistUrl);
-        if (HlsParser.isTsFormat(testChunklist)) {
+        String testChunkList = httpGet(videoChunkListUrl);
+        if (HlsParser.isTsFormat(testChunkList)) {
             log.info("检测到 TS 格式（传统 HLS）");
             playlistInfo.setFormat("ts");
         } else {
@@ -335,17 +328,17 @@ public class HlsRecorder {
 
         // 查找对应的音频流
         String audioGroupId = selectedVideo.getAudioGroupId();
-        String audioChunklistUrl = null;
+        String audioChunkListUrl = null;
         if (audioGroupId != null) {
             HlsParser.AudioStreamInfo audioStream = playlistInfo.getAudioStreamByGroupId(audioGroupId);
             if (audioStream != null) {
-                audioChunklistUrl = toAbsoluteUrl(masterUrl, audioStream.getChunklistUrl());
-                log.info("音频 chunklist: {} -> {}", audioStream.getChunklistUrl(), audioChunklistUrl);
+                audioChunkListUrl = toAbsoluteUrl(masterUrl, audioStream.getChunklistUrl());
+                log.info("音频 chunklist: {} -> {}", audioStream.getChunklistUrl(), audioChunkListUrl);
             }
         }
 
-        playlistInfo.setSelectedVideoChunklist(videoChunklistUrl);
-        playlistInfo.setSelectedAudioChunklist(audioChunklistUrl);
+        playlistInfo.setSelectedVideoChunklist(videoChunkListUrl);
+        playlistInfo.setSelectedAudioChunklist(audioChunkListUrl);
 
         return playlistInfo;
     }
@@ -368,91 +361,13 @@ public class HlsRecorder {
     }
 
     /**
-     * 刷新 chunklist URLs（403 时调用）
-     * 通过 API 获取最新的 hls_source，然后重新解析 master.m3u8
-     * @return 新的 MasterPlaylistInfo，或 null 如果刷新失败
-     */
-    private HlsParser.MasterPlaylistInfo refreshChunklistUrls(RecordingTask task) {
-        String username = task.getUsername();
-        log.warn("正在刷新直播间 [{}] 的 m3u8 地址...", username);
-        
-        try {
-            // 调用 API 获取最新的直播间信息
-            var context = apiService.getChatVideoContext(username);
-            if (context == null || context.getHlsSource() == null) {
-                log.error("刷新 m3u8 失败: API 返回空数据");
-                return null;
-            }
-            
-            String newMasterUrl = context.getHlsSource();
-            log.info("获取到新的 master.m3u8: {}", newMasterUrl);
-            
-            // 重新解析 master.m3u8
-            String content = httpGet(newMasterUrl);
-            HlsParser.MasterPlaylistInfo playlistInfo = HlsParser.parseMasterPlaylist(content);
-            
-            // 选择视频流
-            List<HlsParser.StreamInfo> videoStreams = playlistInfo.getVideoStreams();
-            if (videoStreams.isEmpty()) {
-                log.error("刷新后 master.m3u8 中没有找到可用的视频流");
-                return null;
-            }
-            
-            // 重新选择分辨率（保持原有偏好）
-            int targetHeight = parseQualityHeight(getPreferredQuality());
-            videoStreams.sort((a, b) -> Integer.compare(b.getResolutionHeight(), a.getResolutionHeight()));
-            
-            HlsParser.StreamInfo selectedVideo = videoStreams.get(0);
-            for (HlsParser.StreamInfo stream : videoStreams) {
-                if (stream.getResolutionHeight() >= targetHeight) {
-                    selectedVideo = stream;
-                    break;
-                }
-            }
-            
-            // 更新 chunklist URL
-            String newVideoChunklist = toAbsoluteUrl(newMasterUrl, selectedVideo.getChunklistUrl());
-            playlistInfo.setSelectedVideoChunklist(newVideoChunklist);
-            
-            // 检测音频流
-            List<HlsParser.AudioStreamInfo> audioStreams = playlistInfo.getAudioStreams();
-            if (!audioStreams.isEmpty()) {
-                String audioChunklist = toAbsoluteUrl(newMasterUrl, audioStreams.get(0).getChunklistUrl());
-                playlistInfo.setSelectedAudioChunklist(audioChunklist);
-            }
-            
-            log.info("刷新成功 - 视频: {}, 音频: {}", 
-                playlistInfo.getSelectedVideoChunklist(), 
-                playlistInfo.getSelectedAudioChunklist());
-            
-            return playlistInfo;
-            
-        } catch (UrlExpiredException e) {
-            log.error("刷新 m3u8 时再次遇到 403，将在下一轮重试");
-            return null;
-        } catch (Exception e) {
-            log.error("刷新 m3u8 失败: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * 下载并合并循环（完全异步版本）
-     *
-     * 核心改进：
-     * 1. 分片下载完全异步，不阻塞获取新的 m3u8
-     * 2. 解析 PART-HOLD-BACK 确定轮询间隔
-     * 3. 持续轮询 m3u8，发现新分片立即异步下载
-     */
-
-    /**
      * 下载并合并循环（增量合并版本）
      * <p>
      * 核心改进：
      * 1. 每次 chunklist 下载完成后立即合并，生成 partN.mp4
      * 2. 录制结束后用 ffmpeg concat 合并所有 parts
      */
-    private void downloadAndMergeLoop(RecordingTask task, String videoChunklistUrl, String audioChunklistUrl, Path tmpDir, List<String> videoFiles, List<String> audioFiles) throws Exception {
+    private void downloadAndMergeLoopM4s(RecordingTask task, String videoChunklistUrl, String audioChunklistUrl, Path tmpDir, List<String> videoFiles, List<String> audioFiles) throws Exception {
 
         // 用于跟踪已下载的片段URL，避免重复下载（线程安全）
         Set<String> downloadedVideoUrls = ConcurrentHashMap.newKeySet();
@@ -471,7 +386,7 @@ public class HlsRecorder {
         // 用于跟踪 part 文件
         List<Path> partFiles = new ArrayList<>();
         int partCounter = 0;
-        
+
         // 实时追加到最终文件
         Path finalOutput = null;
 
@@ -481,11 +396,6 @@ public class HlsRecorder {
         // 下载 init 片段
         downloadInitSegments(task, videoChunklistUrl, audioChunklistUrl, tmpDir);
 
-        String format = task.getFormat();
-        if ("ts".equals(format)) {
-            downloadAndMergeLoopTs(task, videoChunklistUrl, audioChunklistUrl, tmpDir, videoFiles, audioFiles);
-            return;
-        }
         // fMP4 格式继续使用原有逻辑
 
         while (!task.isStopped()) {
@@ -614,7 +524,7 @@ public class HlsRecorder {
                 if (!pendingVideoFiles.isEmpty() && !pendingAudioFiles.isEmpty()) {
                     // 使用 mergeToPartFile 合并（内部处理二进制拼接和 ffmpeg 混合）
                     mergeToPartFile(task, pendingVideoFiles, pendingAudioFiles);
-                    
+
                     // 实时追加到最终文件
                     Path partFile = task.getOutputDir().resolve("part" + task.getPartCount() + ".mp4");
                     appendToFinalFile(partFile, finalOutput, task);
@@ -697,13 +607,13 @@ public class HlsRecorder {
 
         try (java.util.stream.Stream<Path> walk = Files.walk(dir)) {
             walk.sorted(java.util.Comparator.comparing(Path::toString).reversed())
-                .forEach(p -> {
-                    try {
-                        Files.deleteIfExists(p);
-                    } catch (IOException e) {
-                        log.warn("删除文件失败: {} - {}", p, e.getMessage());
-                    }
-                });
+                    .forEach(p -> {
+                        try {
+                            Files.deleteIfExists(p);
+                        } catch (IOException e) {
+                            log.warn("删除文件失败: {} - {}", p, e.getMessage());
+                        }
+                    });
         }
     }
 
@@ -741,15 +651,15 @@ public class HlsRecorder {
         try {
             // 从 task 获取已设置的最终文件路径
             Path targetFinal = task.getFinalOutputFile();
-            
+
             if (targetFinal == null) {
                 log.error("未设置最终文件路径");
                 return;
             }
-            
+
             // 确保父目录存在
             Files.createDirectories(targetFinal.getParent());
-            
+
             if (!Files.exists(targetFinal)) {
                 // 第一个 part：直接移动为最终文件
                 Files.move(partFile, targetFinal, StandardCopyOption.REPLACE_EXISTING);
@@ -763,26 +673,26 @@ public class HlsRecorder {
                     writer.write("file '" + partFile.toAbsolutePath() + "'");
                     writer.newLine();
                 }
-                
+
                 Path tempOutput = Files.createTempFile("temp_merge_", ".mp4");
                 String concatCmd = String.format("%s -y -f concat -safe 0 -i \"%s\" -c copy \"%s\"",
                         getFfmpegPath(), concatList.toString(), tempOutput.toString());
-                
+
                 log.debug("追加 part 到最终文件: {}", partFile.getFileName());
                 ProcessBuilder pb = new ProcessBuilder("bash", "-c", concatCmd);
                 Process process = pb.start();
                 int exitCode = process.waitFor();
-                
+
                 if (exitCode == 0) {
                     Files.move(tempOutput, targetFinal, StandardCopyOption.REPLACE_EXISTING);
                     Files.deleteIfExists(partFile);
-                    log.info("Part 已追加并删除: {} -> {} (total {} bytes)", 
+                    log.info("Part 已追加并删除: {} -> {} (total {} bytes)",
                             partFile.getFileName(), targetFinal.getFileName(), Files.size(targetFinal));
                 } else {
                     log.error("追加 part 失败, exitCode={}", exitCode);
                     Files.deleteIfExists(tempOutput);
                 }
-                
+
                 Files.deleteIfExists(concatList);
             }
         } catch (Exception e) {
@@ -1162,12 +1072,16 @@ public class HlsRecorder {
             conn.setReadTimeout(30000);
 
             int statusCode = conn.getResponseCode();
-            
+
             if (statusCode == 403) {
                 conn.disconnect();
-                throw new UrlExpiredException("URL 返回 403，Token 可能已过期: " + urlStr, urlStr);
+                throw new UrlExpiredException("URL 返回 403，Token 可能已过期: " + urlStr, urlStr, 403);
             }
-            
+            if(statusCode != 200) {
+                conn.disconnect();
+                throw new UrlExpiredException("http请求失败，状态码：" + statusCode, urlStr, statusCode);
+            }
+
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
                 StringBuilder response = new StringBuilder();
                 String line;
@@ -1225,21 +1139,36 @@ public class HlsRecorder {
             this.startTime = System.currentTimeMillis();
         }
 
-        public String getUrl() { return url; }
-        public String getType() { return type; }
-        public String getFilename() { return filename; }
-        public long getStartTime() { return startTime; }
-        public long getElapsedSeconds() { return (System.currentTimeMillis() - startTime) / 1000; }
+        public String getUrl() {
+            return url;
+        }
+
+        public String getType() {
+            return type;
+        }
+
+        public String getFilename() {
+            return filename;
+        }
+
+        public long getStartTime() {
+            return startTime;
+        }
+
+        public long getElapsedSeconds() {
+            return (System.currentTimeMillis() - startTime) / 1000;
+        }
     }
 
     /**
      * 录制任务内部类
      */
+    @Data
     public class RecordingTask {
-        private final String taskId;
-        private final String username;
-        private final String masterM3u8Url;
-        private final long startTime;
+        private String taskId;
+        private String username;
+        private String masterM3u8Url;
+        private long startTime;
         private String format; // "fmp4" 或 "ts"
         private String chunklistUrl;
         private Path tmpDir;
@@ -1259,77 +1188,11 @@ public class HlsRecorder {
             this.startTime = System.currentTimeMillis();
         }
 
-        public String getTaskId() {
-            return taskId;
-        }
-
-        public String getUsername() {
-            return username;
-        }
-
-        public String getMasterM3u8Url() {
-            return masterM3u8Url;
-        }
-
-        public long getStartTime() {
-            return startTime;
-        }
 
         public long getRuntimeSeconds() {
             return (System.currentTimeMillis() - startTime) / 1000;
         }
 
-        public String getFormat() {
-            return format;
-        }
-
-        public void setFormat(String format) {
-            this.format = format;
-        }
-
-        public void setChunklistUrl(String chunklistUrl) {
-            this.chunklistUrl = chunklistUrl;
-        }
-
-        public Path getTmpDir() {
-            return tmpDir;
-        }
-
-        public void setTmpDir(Path tmpDir) {
-            this.tmpDir = tmpDir;
-        }
-
-        public Path getOutputDir() {
-            return outputDir;
-        }
-
-        public void setOutputDir(Path outputDir) {
-            this.outputDir = outputDir;
-        }
-
-        public Path getFinalOutputFile() {
-            return finalOutputFile;
-        }
-
-        public void setFinalOutputFile(Path finalOutputFile) {
-            this.finalOutputFile = finalOutputFile;
-        }
-
-        public Path getInitVideoSegmentFile() {
-            return initVideoSegmentFile;
-        }
-
-        public void setInitVideoSegmentFile(Path initVideoSegmentFile) {
-            this.initVideoSegmentFile = initVideoSegmentFile;
-        }
-
-        public Path getInitAudioSegmentFile() {
-            return initAudioSegmentFile;
-        }
-
-        public void setInitAudioSegmentFile(Path initAudioSegmentFile) {
-            this.initAudioSegmentFile = initAudioSegmentFile;
-        }
 
         public boolean isStopped() {
             return stopped.get();
@@ -1510,8 +1373,8 @@ public class HlsRecorder {
                     if (mergedFile != null && Files.exists(mergedFile)) {
                         if (isFirstChunk) {
                             // 首次：直接转换 TS 为 MP4
-                            finalOutput = task.getOutputDir().resolve(task.getUsername() + "_" + 
-                                LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")) + ".mp4");
+                            finalOutput = task.getOutputDir().resolve(task.getUsername() + "_" +
+                                    LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")) + ".mp4");
                             Files.createDirectories(finalOutput.getParent());
 
                             // TS 转 MP4
@@ -1519,7 +1382,7 @@ public class HlsRecorder {
                             Files.copy(mergedFile, tsFile);
 
                             String mp4Cmd = String.format("%s -y -i \"%s\" -c copy \"%s\"",
-                                getFfmpegPath(), tsFile.toString(), finalOutput.toString());
+                                    getFfmpegPath(), tsFile.toString(), finalOutput.toString());
                             runFfmpeg(mp4Cmd.split(" "), task);
 
                             log.info("TS格式录制开始: {}", finalOutput.getFileName());
@@ -1588,7 +1451,7 @@ public class HlsRecorder {
 
             Path mergedTs = tmpDir.resolve("merged_" + System.currentTimeMillis() + ".ts");
             String cmd = String.format("%s -y -f concat -safe 0 -i \"%s\" -c copy \"%s\"",
-                getFfmpegPath(), concatList.toString(), mergedTs.toString());
+                    getFfmpegPath(), concatList.toString(), mergedTs.toString());
 
             ProcessBuilder pb = new ProcessBuilder("bash", "-c", cmd);
             int exit = pb.start().waitFor();
@@ -1618,7 +1481,7 @@ public class HlsRecorder {
         }
         Path videoMerged = tmpDir.resolve("video_merged_" + System.currentTimeMillis() + ".ts");
         String videoCmd = String.format("%s -y -f concat -safe 0 -i \"%s\" -c copy \"%s\"",
-            getFfmpegPath(), videoConcatList.toString(), videoMerged.toString());
+                getFfmpegPath(), videoConcatList.toString(), videoMerged.toString());
 
         ProcessBuilder pbVideo = new ProcessBuilder("bash", "-c", videoCmd);
         int exitVideo = pbVideo.start().waitFor();
@@ -1633,7 +1496,7 @@ public class HlsRecorder {
         }
         Path audioMerged = tmpDir.resolve("audio_merged_" + System.currentTimeMillis() + ".ts");
         String audioCmd = String.format("%s -y -f concat -safe 0 -i \"%s\" -c copy \"%s\"",
-            getFfmpegPath(), audioConcatList.toString(), audioMerged.toString());
+                getFfmpegPath(), audioConcatList.toString(), audioMerged.toString());
 
         ProcessBuilder pbAudio = new ProcessBuilder("bash", "-c", audioCmd);
         int exitAudio = pbAudio.start().waitFor();
@@ -1646,7 +1509,7 @@ public class HlsRecorder {
         if (exitVideo == 0 && exitAudio == 0) {
             Path mergedTs = tmpDir.resolve("merged_" + System.currentTimeMillis() + ".ts");
             String mixCmd = String.format("%s -y -i \"%s\" -i \"%s\" -c copy -map 0:v:0 -map 1:a:0 \"%s\"",
-                getFfmpegPath(), videoMerged.toString(), audioMerged.toString(), mergedTs.toString());
+                    getFfmpegPath(), videoMerged.toString(), audioMerged.toString(), mergedTs.toString());
 
             ProcessBuilder pbMix = new ProcessBuilder("bash", "-c", mixCmd);
             int exitMix = pbMix.start().waitFor();
@@ -1684,7 +1547,7 @@ public class HlsRecorder {
 
         Path tempOutput = tmpDir().resolve("temp_append_" + System.currentTimeMillis() + ".mp4");
         String cmd = String.format("%s -y -f concat -safe 0 -i \"%s\" -c copy \"%s\"",
-            getFfmpegPath(), concatList.toString(), tempOutput.toString());
+                getFfmpegPath(), concatList.toString(), tempOutput.toString());
 
         ProcessBuilder pb = new ProcessBuilder("bash", "-c", cmd);
         int exit = pb.start().waitFor();

@@ -271,15 +271,7 @@ public class ChannelController {
     public ResponseEntity<?> startRecording(@PathVariable String username) {
         try {
             // 获取直播间信息
-            var context = apiService.getChatVideoContext(username);
-            if (context == null) {
-                return ResponseEntity.badRequest().body("无法获取直播间信息");
-            }
-
-            String hlsSource = context.getHlsSource();
-            if (hlsSource == null || hlsSource.isEmpty()) {
-                return ResponseEntity.badRequest().body("直播间当前没有HLS源");
-            }
+            String hlsSource = apiService.getHlsSource(username);
 
             // 检查是否已在录制
             if (hlsRecorder.isRecording(username)) {
