@@ -72,6 +72,7 @@ public class ChannelMonitorTask {
         for (Channel channel : enabledChannels) {
             try {
                 checkChannel(channel);
+                Thread.sleep(500);
             } catch (Exception e) {
                 log.error("检查直播间 [{}] 时发生异常: {}", channel.getUsername(), e.getMessage());
             }
