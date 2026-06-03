@@ -82,6 +82,10 @@ public class ChaturbateApiService {
             } else if (statusCode == 403) {
                 log.error("获取直播间 [{}] 失败: 403 Forbidden - Cookie 可能已过期", username);
                 return null;
+            } if (statusCode == 429) {
+                log.error("获取直播间 [{}] 失败: 429 访问频繁,暂停3000毫秒进行访问,{}", username,conn.getResponseMessage());
+                Thread.sleep(3000);
+                return getChatVideoContext(username);
             } else {
                 log.error("获取直播间 [{}] 失败: HTTP {}", username, statusCode);
                 return null;

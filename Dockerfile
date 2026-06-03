@@ -59,24 +59,7 @@ COPY --from=frontend-builder /build/frontend/dist /usr/share/nginx/html/app
 # --- 创建必要目录 ---
 RUN mkdir -p /app/recordings /app/data /app/tmp
 
-# --- 启动脚本 ---
-RUN cat > /app/start.sh <<'SCRIPT'
-#!/bin/bash
-echo "[startup] Starting nginx..."
-nginx -c /etc/nginx/nginx.conf
-NGINX_PID=$!
-
-echo "[startup] Starting Java app..."
-java -jar /app/app.jar &
-JAVA_PID=$!
-
-echo "[startup] nginx PID=$NGINX_PID, Java PID=$JAVA_PID"
-
-# 任意进程退出时全部终止
-trap "echo '[shutdown] Stopping...'; kill -TERM $NGINX_PID $JAVA_PID 2>/dev/null; wait 2>/dev/null; exit 0" SIGTERM SIGINT
-
-wait $NGINX_PID $JAVA_PID
-SCRIPT
+COPY start.sh /app/start.sh
 
 RUN chmod +x /app/start.sh
 
