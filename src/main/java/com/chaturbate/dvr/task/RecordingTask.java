@@ -40,6 +40,18 @@ public class RecordingTask {
     private int partCount = 0;
     private final ConcurrentHashMap<String, ActiveDownload> activeDownloads = new ConcurrentHashMap<>();
 
+    // -------------------- LL-HLS 序列号追踪 --------------------
+    /** 视频流下一个应请求的 msn（首次为 0，后续由 chunklist 响应更新） */
+    private long videoNextMsn = 0;
+    /** 视频流下一个应请求的 part index */
+    private int videoNextPart = 0;
+    /** 音频流下一个应请求的 msn */
+    private long audioNextMsn = 0;
+    /** 音频流下一个应请求的 part index */
+    private int audioNextPart = 0;
+    /** 是否已完成首次 chunklist 拉取（首次不带 _HLS_msn/_HLS_part） */
+    private boolean firstChunklistFetched = false;
+
     /**
      * @param taskId           任务ID
      * @param username         主播用户名
@@ -187,6 +199,19 @@ public class RecordingTask {
     public int getActiveDownloadCount() {
         return activeDownloads.size();
     }
+
+    // -------------------- LL-HLS 序列号 --------------------
+
+    public long getVideoNextMsn() { return videoNextMsn; }
+    public void setVideoNextMsn(long msn) { this.videoNextMsn = msn; }
+    public int getVideoNextPart() { return videoNextPart; }
+    public void setVideoNextPart(int part) { this.videoNextPart = part; }
+    public long getAudioNextMsn() { return audioNextMsn; }
+    public void setAudioNextMsn(long msn) { this.audioNextMsn = msn; }
+    public int getAudioNextPart() { return audioNextPart; }
+    public void setAudioNextPart(int part) { this.audioNextPart = part; }
+    public boolean isFirstChunklistFetched() { return firstChunklistFetched; }
+    public void setFirstChunklistFetched(boolean v) { this.firstChunklistFetched = v; }
 
     // -------------------- 资源清理 --------------------
 

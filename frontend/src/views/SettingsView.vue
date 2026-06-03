@@ -51,9 +51,9 @@
             <el-form-item label="录制路径">
               <el-input 
                 v-model="recordingSettings.record_path" 
-                placeholder="./recordings/{username}/{username}-{yyyy-mm-dd}.mp4"
+                placeholder="./recordings/{username}/{yyyy-mm-dd-HH-MM-SS}.mp4"
               />
-              <div class="form-tip">支持占位符：{username}（用户名）、{yyyy-mm-dd}（日期）<br/>例：./recordings/{username}/{username}-{yyyy-mm-dd}.mp4</div>
+              <div class="form-tip">支持占位符：{username}（用户名）、{yyyy-mm-dd}（日期）、{yyyy-mm-dd-HH-MM-SS}（时间）<br/>例：./recordings/{username}/{yyyy-mm-dd-HH-MM-SS}.mp4</div>
             </el-form-item>
 
             <el-form-item label="临时文件路径">

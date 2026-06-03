@@ -35,7 +35,7 @@ mybatis:
 # Logging
 logging:
   level:
-    com.chaturbate.dvr: DEBUG
+    com.chaturbate.dvr: INFO
     org.apache.ibatis: ERROR
     com.chaturbate.dvr.mapper: ERROR
     org.mybatis: ERROR

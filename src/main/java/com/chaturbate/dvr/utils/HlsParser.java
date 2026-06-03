@@ -145,11 +145,41 @@ public class HlsParser {
      * 返回所有片段的 URL 和 init 片段 URL
      * @return 包含 segments, initSegmentUrl, partHoldBack 的 Map
      */
-    public static java.util.Map<String, Object> parseChunklistWithInit(String m3u8Content) {
+    /**
+     * LL-HLS chunklist 解析结果
+     */
+    public static class LlHlsChunklistInfo {
+        /** EXT-X-MEDIA-SEQUENCE 值（基础 segment 号） */
+        public long mediaSequence = 0;
+        /** 当前 chunklist 中的完整 segment 数 */
+        public int segmentCount = 0;
+        /** 当前 chunklist 中的 partial segment（part）数 */
+        public int partCount = 0;
+        /** EXT-X-PART-HOLD-BACK 值（秒） */
+        public double partHoldBack = 0;
+        /** 下一个应请求的 msn（media sequence number） */
+        public long nextMsn = 0;
+        /** 下一个应请求的 part index */
+        public int nextPart = 0;
+        /** 该 chunklist 是否只含 partial segments（无完整 segment） */
+        public boolean isPartialOnly = false;
+    }
+
+    /**
+     * 解析 LL-HLS chunklist（含 _HLS_msn / _HLS_part 增量参数计算）
+     * 返回 segments + LL-HLS 序列信息
+     * @param m3u8Content chunklist 内容
+     * @param prevInfo 上一次解析的结果（首轮传 null）
+     * @return Map 含: segments, initSegmentUrl, partHoldBack, llHlsInfo
+     */
+    public static java.util.Map<String, Object> parseChunklistWithInit(String m3u8Content, LlHlsChunklistInfo prevInfo) {
         java.util.Map<String, Object> result = new java.util.HashMap<>();
         List<SegmentInfo> segments = new ArrayList<>();
         String initSegmentUrl = null;
-        Long partHoldBack = null;
+        double partHoldBack = 0;
+        long mediaSequence = 0;
+        int partCount = 0;
+        boolean hasFullSegment = false;
 
         try (BufferedReader reader = new BufferedReader(new StringReader(m3u8Content))) {
             String line;
@@ -163,18 +193,23 @@ public class HlsParser {
                     initSegmentUrl = extractMapUri(line);
                     log.debug("解析到 EXT-X-MAP: {}", initSegmentUrl);
                 }
-                
-                // 调试：打印所有 # 开头的行
-                if (line.startsWith("#")) {
-                    log.trace("chunklist 标签: {}", line);
+
+                // 解析 #EXT-X-MEDIA-SEQUENCE（媒体序列号）
+                if (line.startsWith("#EXT-X-MEDIA-SEQUENCE:")) {
+                    String val = line.substring(line.indexOf(':') + 1).trim();
+                    try {
+                        mediaSequence = Long.parseLong(val);
+                        log.debug("解析到 MEDIA-SEQUENCE: {}", mediaSequence);
+                    } catch (NumberFormatException e) {
+                        log.warn("无法解析 MEDIA-SEQUENCE 值: {}", val);
+                    }
                 }
-                
+
                 // 解析 #EXT-X-PART-HOLD-BACK（直播延迟控制）
-                // 格式: #EXT-X-PART-HOLD-BACK:1.0
                 if (line.startsWith("#EXT-X-PART-HOLD-BACK:")) {
                     String valueStr = line.substring(line.indexOf(':') + 1).trim();
                     try {
-                        partHoldBack = (long) Double.parseDouble(valueStr);
+                        partHoldBack = Double.parseDouble(valueStr);
                         log.debug("解析到 PART-HOLD-BACK: {}s", partHoldBack);
                     } catch (NumberFormatException e) {
                         log.warn("无法解析 PART-HOLD-BACK 值: {}", valueStr);
@@ -200,10 +235,83 @@ public class HlsParser {
             log.error("解析片段列表失败: {}", e.getMessage());
         }
 
+        // 统计完整 segment 数和 partial segment（part）数
+        // LL-HLS: 带 EXTINF 但不带 #EXT-X-MAP 的是 partial segment
+        // 完整 segment 有 EXTINF 描述，但 part 由 EXTINF + URL 构成且数量多于常规 segments
+        // 区分方式：chunklist 中有 #EXT-X-MAP 则该 chunklist 含完整 segments；否则只有 parts
+        int fullSegmentCount = 0;
+        int partialPartCount = 0;
+
+        // 判断依据：看是否有完整 segment（带 EXTINF 且之前有 EXT-X-MAP 的 segment）
+        // 实际上：如果 initSegmentUrl != null，则该 chunklist 含完整 segments
+        // 如果 initSegmentUrl == null，则该 chunklist 只含 partial parts
+        // Chaturbate 的 LL-HLS：每个 segment 前有 EXT-X-MAP
+        if (initSegmentUrl != null) {
+            // 含完整 segments
+            fullSegmentCount = segments.size();
+            hasFullSegment = true;
+        } else {
+            // 只有 partial parts
+            partialPartCount = segments.size();
+            hasFullSegment = false;
+        }
+
+        // 计算下一个应请求的 msn 和 part
+        LlHlsChunklistInfo llInfo = new LlHlsChunklistInfo();
+        llInfo.mediaSequence = mediaSequence;
+        llInfo.segmentCount = fullSegmentCount;
+        llInfo.partCount = partialPartCount;
+        llInfo.partHoldBack = partHoldBack;
+        llInfo.isPartialOnly = !hasFullSegment;
+
+        if (prevInfo == null) {
+            // 首轮：请求整个 playlist，下次从当前位置继续
+            if (hasFullSegment) {
+                llInfo.nextMsn = mediaSequence + fullSegmentCount;
+                llInfo.nextPart = 0;
+            } else {
+                llInfo.nextMsn = mediaSequence;
+                llInfo.nextPart = partialPartCount;
+            }
+        } else {
+            // 增量请求：基于上次状态 + 本次 chunklist 变化推算
+            if (hasFullSegment) {
+                // 本次 chunklist 有完整 segments
+                if (mediaSequence > prevInfo.mediaSequence) {
+                    // 进入新 segment
+                    llInfo.nextMsn = mediaSequence + fullSegmentCount;
+                    llInfo.nextPart = 0;
+                } else {
+                    // 同 segment 的新 parts（实际上不应出现在含完整 segment 的 chunklist 中）
+                    llInfo.nextMsn = prevInfo.nextMsn;
+                    llInfo.nextPart = fullSegmentCount;
+                }
+            } else {
+                // 本次 chunklist 只有 partial parts
+                if (mediaSequence > prevInfo.mediaSequence) {
+                    // 新 segment 开始，parts 从 0
+                    llInfo.nextMsn = mediaSequence;
+                    llInfo.nextPart = partialPartCount;
+                } else {
+                    // 同 segment 的更多 parts
+                    llInfo.nextMsn = prevInfo.mediaSequence;
+                    llInfo.nextPart = Math.max(prevInfo.nextPart, partialPartCount);
+                }
+            }
+        }
+
         result.put("segments", segments);
         result.put("initSegmentUrl", initSegmentUrl);
-        result.put("partHoldBack", partHoldBack);
+        result.put("partHoldBack", (long) partHoldBack);
+        result.put("llHlsInfo", llInfo);
         return result;
+    }
+
+    /**
+     * 兼容旧调用（首轮无 prevInfo）
+     */
+    public static java.util.Map<String, Object> parseChunklistWithInit(String m3u8Content) {
+        return parseChunklistWithInit(m3u8Content, null);
     }
 
     /**
