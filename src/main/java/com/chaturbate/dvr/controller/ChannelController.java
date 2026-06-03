@@ -5,6 +5,7 @@ import com.chaturbate.dvr.mapper.ChannelMapper;
 import com.chaturbate.dvr.service.ChaturbateApiService;
 import com.chaturbate.dvr.service.HlsRecorder;
 import com.chaturbate.dvr.task.ChannelMonitorTask;
+import com.chaturbate.dvr.task.RecordingTask;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -333,7 +334,7 @@ public class ChannelController {
     @GetMapping("/{username}/logs")
     public ResponseEntity<?> getLogs(@PathVariable String username) {
         Map<String, Object> result = new HashMap<>();
-        HlsRecorder.RecordingTask task = hlsRecorder.getRecordingTask(username);
+        RecordingTask task = hlsRecorder.getRecordingTask(username);
         
         if (task == null) {
             result.put("success", true);
