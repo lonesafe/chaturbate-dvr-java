@@ -97,7 +97,7 @@ public class ChannelMonitorTask {
 
         if (isPublic && !isRecording) {
             // 开始录制
-            startRecording(channel);
+            startRecording(context,username);
         } else if (!isPublic && isRecording) {
             // 停止录制
             stopRecording(channel);
@@ -107,9 +107,8 @@ public class ChannelMonitorTask {
     /**
      * 开始录制
      */
-    private void startRecording(Channel channel) {
-        String username = channel.getUsername();
-        String hlsSource = apiService.getHlsSource(username);
+    private void startRecording(ChatVideoContext context,String username) {
+        String hlsSource = context.getHlsSource();
 
         // 开始录制（HlsRecorder 会自动维护录制中的列表）
         String taskId = hlsRecorder.startRecording(username, hlsSource);

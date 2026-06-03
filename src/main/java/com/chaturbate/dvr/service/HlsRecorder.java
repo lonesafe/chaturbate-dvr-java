@@ -205,7 +205,7 @@ public class HlsRecorder {
         String[] currentVideoUrl = {null};
         String[] currentAudioUrl = {null};
 
-        while (true) {
+        while (!task.isStopped()) {
             try {
                 // 1. 首次解析 master.m3u8，后续通过 refreshChunklistUrls 刷新
                 HlsParser.MasterPlaylistInfo playlistInfo = selectStreams(task.getMasterM3u8Url(), getPreferredQuality());
@@ -241,9 +241,9 @@ public class HlsRecorder {
                 List<String> audioFiles = new ArrayList<>();
 
                 if ("ts".equals(task.getFormat())) {
-                    downloadAndMergeLoopTs(task, currentVideoUrl[0], currentAudioUrl[0], tmpDir, videoFiles, audioFiles);
+                    downloadAndMergeLoopTs(task, currentVideoUrl[0], currentAudioUrl[0], tmpDir, videoFiles);
                 } else {
-                    downloadAndMergeLoopM4s(task, currentVideoUrl[0], currentAudioUrl[0], tmpDir, videoFiles, audioFiles);
+                    downloadAndMergeLoopM4s(task, currentVideoUrl[0], currentAudioUrl[0], tmpDir);
                 }
 
                 // 5. 录制结束后，合并所有 part 文件（仅 fMP4 需要，TS 已在循环中合并）
@@ -264,7 +264,7 @@ public class HlsRecorder {
                     log.warn("检测到 URL 过期 (403)，准备刷新... ");
                     ChatVideoContext context =  apiService.getChatVideoContext(task.getUsername());
                     if (context != null && context.isPublicLive()) {
-                        task.setMasterM3u8Url(apiService.getHlsSource(task.getUsername()));
+                        task.setMasterM3u8Url(context.getHlsSource());
                         // 重置 chunkList URLs，强制 selectStreams 重新解析
                         currentVideoUrl[0] = null;
                         currentAudioUrl[0] = null;
@@ -367,7 +367,7 @@ public class HlsRecorder {
      * 1. 每次 chunklist 下载完成后立即合并，生成 partN.mp4
      * 2. 录制结束后用 ffmpeg concat 合并所有 parts
      */
-    private void downloadAndMergeLoopM4s(RecordingTask task, String videoChunklistUrl, String audioChunklistUrl, Path tmpDir, List<String> videoFiles, List<String> audioFiles) throws Exception {
+    private void downloadAndMergeLoopM4s(RecordingTask task, String videoChunklistUrl, String audioChunklistUrl, Path tmpDir) throws Exception {
 
         // 用于跟踪已下载的片段URL，避免重复下载（线程安全）
         Set<String> downloadedVideoUrls = ConcurrentHashMap.newKeySet();
@@ -537,10 +537,13 @@ public class HlsRecorder {
                 Thread.sleep(sleepTime);
 
             } catch (Exception e) {
-                log.error("下载循环异常: {}", e.getMessage(), e);
-                if (!task.isStopped()) {
-                    Thread.sleep(2000);
+                downloadExecutor.shutdown();
+                try {
+                    downloadExecutor.awaitTermination(30, TimeUnit.SECONDS);
+                } catch (InterruptedException e1) {
+                    log.warn("下载线程池关闭被中断");
                 }
+                throw e;
             }
         }
 
@@ -1264,7 +1267,7 @@ public class HlsRecorder {
      * 下载并合并循环（TS 格式 - 传统 HLS）
      * 每个 m3u8/chunklist 下载完成后立即合并到最终文件
      */
-    private void downloadAndMergeLoopTs(RecordingTask task, String videoChunklistUrl, String audioChunklistUrl, Path tmpDir, List<String> videoFiles, List<String> audioFiles) throws Exception {
+    private void downloadAndMergeLoopTs(RecordingTask task, String videoChunklistUrl, String audioChunklistUrl, Path tmpDir, List<String> videoFiles) throws Exception {
 
         Set<String> downloadedVideoUrls = ConcurrentHashMap.newKeySet();
         Set<String> downloadedAudioUrls = ConcurrentHashMap.newKeySet();
