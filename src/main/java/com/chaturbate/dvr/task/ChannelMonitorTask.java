@@ -8,7 +8,6 @@ import com.chaturbate.dvr.service.HlsRecorder;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -20,7 +19,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * 直播间监控定时任务
- * 定期检查直播间状态，自动开始/停止录制
+ * 定期检查频道状态，自动开始/停止录制
  */
 @Slf4j
 @Component
@@ -30,9 +29,6 @@ public class ChannelMonitorTask {
     private final ChaturbateApiService apiService;
     private final HlsRecorder hlsRecorder;
     private final ChannelMapper channelMapper;
-
-    @Value("${dvr.preferred-quality:720p}")
-    private String preferredQuality;
 
     /** 启用的频道内存列表（从数据库加载） */
     private final CopyOnWriteArrayList<Channel> enabledChannels = new CopyOnWriteArrayList<>();
@@ -59,7 +55,7 @@ public class ChannelMonitorTask {
     }
 
     /**
-     * 定期检查直播间状态 (默认每30秒)
+     * 定期检查频道状态 (默认每30秒)
      */
     @Scheduled(fixedDelayString = "${dvr.check-interval-seconds:30}000")
     public void checkChannels() {
@@ -140,10 +136,4 @@ public class ChannelMonitorTask {
         return new HashMap<>(channelStatuses);
     }
 
-    /**
-     * 获取单个频道的当前状态
-     */
-    public String getChannelStatus(String username) {
-        return channelStatuses.get(username);
-    }
 }
