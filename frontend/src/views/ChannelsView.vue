@@ -102,7 +102,7 @@
             </el-button>
             <el-button size="small" @click="handleViewLogs(row)">日志</el-button>
             <el-button 
-              v-if="row.recording"
+              v-if="recordingUsernames.includes(row.username)"
               type="warning" 
               size="small"
               @click="handleViewDownloads(row)"
@@ -191,7 +191,22 @@
           :closable="false"
           show-icon
         />
-        <el-table v-else :data="currentDownloads" style="width: 100%">
+        <template v-else>
+          <div class="download-stats-bar">
+            <el-tag type="info" size="small">
+              线程池活跃: <b>{{ currentDownloadStats?.threadPoolActiveCount ?? 0 }}</b>
+            </el-tag>
+            <el-tag type="info" size="small">
+              队列大小: <b>{{ currentDownloadStats?.threadPoolQueueSize ?? 0 }}</b>
+            </el-tag>
+            <el-tag type="success" size="small">
+              已完成: <b>{{ currentDownloadStats?.downloadedSegments ?? 0 }}</b>
+            </el-tag>
+            <el-tag type="warning" size="small">
+              进行中: <b>{{ currentDownloadStats?.submittedSegments ?? 0 }}</b>
+            </el-tag>
+          </div>
+          <el-table :data="currentDownloads" style="width: 100%">
           <el-table-column prop="type" label="类型" width="80">
             <template #default="{ row }">
               <el-tag :type="row.type === 'video' ? 'primary' : 'success'" size="small">
@@ -219,6 +234,7 @@
             </template>
           </el-table-column>
         </el-table>
+        </template>
       </div>
       <template #footer>
         <el-button @click="showDownloadsDialog = false">关闭</el-button>
@@ -268,6 +284,12 @@ const currentDownloads = computed(() => {
   if (!currentDownloadUsername.value) return []
   const info = downloadInfo.value[currentDownloadUsername.value]
   return info?.activeDownloads || []
+})
+
+// 下载线程池统计
+const currentDownloadStats = computed(() => {
+  if (!currentDownloadUsername.value) return null
+  return downloadInfo.value[currentDownloadUsername.value] || null
 })
 
 // 监听下载监控对话框关闭
@@ -701,6 +723,13 @@ onUnmounted(() => {
 
 .download-monitor {
   max-height: 500px;
+}
+
+.download-stats-bar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 
 .download-link {

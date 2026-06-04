@@ -10,6 +10,8 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -39,6 +41,11 @@ public class RecordingTask {
     private final List<String> logs = Collections.synchronizedList(new ArrayList<>());
     private int partCount = 0;
     private final ConcurrentHashMap<String, ActiveDownload> activeDownloads = new ConcurrentHashMap<>();
+    private int downloadedSegments = 0;
+    private int submittedSegments = 0;
+    private int threadPoolActiveCount = 0;
+    private int threadPoolQueueSize = 0;
+    private volatile ExecutorService downloadExecutor;
 
     // -------------------- LL-HLS 序列号追踪 --------------------
     /** 视频流下一个应请求的 msn（首次为 0，后续由 chunklist 响应更新） */
@@ -198,6 +205,56 @@ public class RecordingTask {
 
     public int getActiveDownloadCount() {
         return activeDownloads.size();
+    }
+
+    public int getDownloadedSegments() {
+        return downloadedSegments;
+    }
+
+    public void incrementDownloadedSegments() {
+        downloadedSegments++;
+    }
+
+    public int getSubmittedSegments() {
+        return submittedSegments;
+    }
+
+    public void incrementSubmittedSegments() {
+        submittedSegments++;
+    }
+
+    public void decrementSubmittedSegments() {
+        submittedSegments--;
+    }
+
+    public int getThreadPoolActiveCount() {
+        return threadPoolActiveCount;
+    }
+
+    public void setThreadPoolActiveCount(int count) {
+        this.threadPoolActiveCount = count;
+    }
+
+    public int getThreadPoolQueueSize() {
+        return threadPoolQueueSize;
+    }
+
+    public void setThreadPoolQueueSize(int size) {
+        this.threadPoolQueueSize = size;
+    }
+
+    public void setDownloadExecutor(ExecutorService executor) {
+        this.downloadExecutor = executor;
+    }
+
+    /**
+     * 刷新线程池统计（activeCount, queueSize）
+     */
+    public void refreshThreadPoolStats() {
+        if (downloadExecutor instanceof ThreadPoolExecutor tpe) {
+            threadPoolActiveCount = tpe.getActiveCount();
+            threadPoolQueueSize = tpe.getQueue().size();
+        }
     }
 
     // -------------------- LL-HLS 序列号 --------------------
